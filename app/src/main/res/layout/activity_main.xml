@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <EditText
+        android:id="@+id/botToken"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Bot Token (paste here)"
+        android:inputType="textNoSuggestions|textVisiblePassword"/>
+
+    <EditText
+        android:id="@+id/chatId"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Chat ID (e.g., -1001234567890 or your numeric id)"
+        android:inputType="text"/>
+
+    <Button
+        android:id="@+id/startButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Start Sending"/>
+
+    <Button
+        android:id="@+id/stopButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Stop Sending"/>
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Status: Idle"
+        android:paddingTop="12dp"/>
+</LinearLayout>
+
