@@ -1,21 +1,13 @@
 package com.example.telegramsender
 
+import android.content.Intent
 import android.os.Bundle
-import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.*
-import okhttp3.FormBody
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
-
-    private val client = OkHttpClient()
-    private var sendJob: Job? = null
 
     private lateinit var botTokenEdit: EditText
     private lateinit var chatIdEdit: EditText
@@ -33,66 +25,85 @@ class MainActivity : AppCompatActivity() {
         stopButton = findViewById(R.id.stopButton)
         statusText = findViewById(R.id.statusText)
 
+        requestFgPermission()
+        loadSavedValues()
+
         startButton.setOnClickListener {
             val token = botTokenEdit.text.toString().trim()
             val chatId = chatIdEdit.text.toString().trim()
 
             if (token.isEmpty() || chatId.isEmpty()) {
-                statusText.text = "Enter token & chat ID"
+                statusText.text = "Please enter values"
                 return@setOnClickListener
             }
 
-            startSending(token, chatId)
+            saveValues(token, chatId)
+
+            requestFgPermission()
+
+            val intent = Intent(this, TelegramService::class.java)
+            intent.putExtra("token", token)
+            intent.putExtra("chatId", chatId)
+
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+
+            statusText.text = "Service Started"
+        }
+        startButton.setOnClickListener {
+            val token = botTokenEdit.text.toString().trim()
+            val chatId = chatIdEdit.text.toString().trim()
+
+            if (token.isEmpty() || chatId.isEmpty()) {
+                statusText.text = "Please enter values"
+                return@setOnClickListener
+            }
+
+            saveValues(token, chatId)
+
+            requestFgPermission()
+
+            val intent = Intent(this, TelegramService::class.java)
+            intent.putExtra("token", token)
+            intent.putExtra("chatId", chatId)
+
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+
+            statusText.text = "Service Started"
         }
 
-        stopButton.setOnClickListener { stopSending() }
+
+        stopButton.setOnClickListener {
+            stopService(Intent(this, TelegramService::class.java))
+            statusText.text = "Service Stopped"
+        }
     }
-
-    private fun startSending(token: String, chatId: String) {
-        stopSending()
-
-        sendJob = CoroutineScope(Dispatchers.IO).launch {
-            while (isActive) {
-                val message = "App is alive: ${System.currentTimeMillis()}"
-                val success = sendTelegram(token, chatId, message)
-
-                withContext(Dispatchers.Main) {
-                    statusText.text = if (success) "Message Sent" else "Failed"
-                }
-
-                delay(10_000)
+    private fun requestFgPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            val permission = android.Manifest.permission.FOREGROUND_SERVICE
+            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(permission), 123)
             }
         }
     }
 
-    private fun stopSending() {
-        sendJob?.cancel()
-        sendJob = null
-        statusText.text = "Stopped"
+    private fun loadSavedValues() {
+        val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+        botTokenEdit.setText(pref.getString("token", ""))
+        chatIdEdit.setText(pref.getString("chatId", ""))
     }
 
-    private fun sendTelegram(token: String, chatId: String, text: String): Boolean {
-        val url = "https://api.telegram.org/bot$token/sendMessage"
-
-        val body = FormBody.Builder()
-            .add("chat_id", chatId)
-            .add("text", text)
-            .build()
-
-        val request = Request.Builder().url(url).post(body).build()
-
-        return try {
-            client.newCall(request).execute().use { response ->
-                response.isSuccessful
-            }
-        } catch (e: IOException) {
-            Log.e("TG", "Error", e)
-            false
-        }
-    }
-
-    override fun onDestroy() {
-        stopSending()
-        super.onDestroy()
+    private fun saveValues(token: String, chatId: String) {
+        val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+        pref.edit().putString("token", token)
+            .putString("chatId", chatId)
+            .apply()
     }
 }
