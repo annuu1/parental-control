@@ -1,10 +1,10 @@
 package com.example.telegramsender
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.provider.Settings
+import android.text.TextUtils
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
@@ -18,11 +18,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var statusText: TextView
-    private lateinit var projectionManager: MediaProjectionManager
-
-    private val SCREENSHOT_REQUEST = 2001
-    private var screenshotResultCode: Int = 0
-    private var screenshotResultData: Intent? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,16 +29,16 @@ class MainActivity : AppCompatActivity() {
         stopButton = findViewById(R.id.stopButton)
         statusText = findViewById(R.id.statusText)
 
-        projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-
+        // Reuse screenshotButton to open Accessibility Settings
         val screenshotButton = findViewById<Button>(R.id.screenshotButton)
+        screenshotButton.text = "Enable Accessibility Service"
         screenshotButton.setOnClickListener {
-            val intent = projectionManager.createScreenCaptureIntent()
-            startActivityForResult(intent, SCREENSHOT_REQUEST)
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            startActivity(intent)
         }
 
-        requestFgPermission()
         loadSavedValues()
+        updateStatus()
 
         startButton.setOnClickListener {
             val token = botTokenEdit.text.toString().trim()
@@ -54,47 +49,65 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            if (screenshotResultData == null) {
-                Toast.makeText(this, "Please enable screenshot capture first", Toast.LENGTH_SHORT).show()
-                statusText.text = "Permission Missing"
-                return@setOnClickListener
-            }
-
             saveValues(token, chatId)
-
-            requestFgPermission()
-
-            val metrics = resources.displayMetrics
-            val intent = Intent(this, TelegramService::class.java)
-            intent.putExtra("token", token)
-            intent.putExtra("chatId", chatId)
-            intent.putExtra("code", screenshotResultCode)
-            intent.putExtra("data", screenshotResultData)
-            intent.putExtra("width", metrics.widthPixels)
-            intent.putExtra("height", metrics.heightPixels)
-            intent.putExtra("density", metrics.densityDpi)
-
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                startForegroundService(intent)
+            
+            if (isAccessibilityServiceEnabled()) {
+                statusText.text = "Service is Active (managed by System)"
+                Toast.makeText(this, "Service is already running in background", Toast.LENGTH_SHORT).show()
             } else {
-                startService(intent)
+                statusText.text = "Please Enable Accessibility First"
+                Toast.makeText(this, "Enable 'Telegram Sender' in Accessibility Settings", Toast.LENGTH_LONG).show()
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                startActivity(intent)
             }
-
-            statusText.text = "Service Started"
         }
 
         stopButton.setOnClickListener {
-            stopService(Intent(this, TelegramService::class.java))
-            statusText.text = "Service Stopped"
+            if (isAccessibilityServiceEnabled()) {
+                Toast.makeText(this, "Disable service in Accessibility Settings to stop", Toast.LENGTH_LONG).show()
+                val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                startActivity(intent)
+            } else {
+                statusText.text = "Service Stopped"
+            }
         }
     }
-
-    private fun requestFgPermission() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            val permission = android.Manifest.permission.FOREGROUND_SERVICE
-            if (checkSelfPermission(permission) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(arrayOf(permission), 123)
+    
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedComponentName = packageName + "/" + TelegramService::class.java.canonicalName
+        val enabledServicesSetting = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        
+        val colonSplitter = TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServicesSetting)
+        
+        while (colonSplitter.hasNext()) {
+            val componentName = colonSplitter.next()
+            if (componentName.equals(expectedComponentName, ignoreCase = true)) {
+                return true
             }
+        }
+        return false
+    }
+    
+    override fun onResume() {
+        super.onResume()
+        updateStatus()
+    }
+    
+    private fun updateStatus() {
+        if (isAccessibilityServiceEnabled()) {
+            statusText.text = "Status: Service Active"
+            val screenshotButton = findViewById<Button>(R.id.screenshotButton)
+            screenshotButton.isEnabled = false
+            screenshotButton.text = "Accessibility Enabled"
+        } else {
+            statusText.text = "Status: Service Inactive"
+            val screenshotButton = findViewById<Button>(R.id.screenshotButton)
+            screenshotButton.isEnabled = true
+            screenshotButton.text = "Enable Accessibility Service"
         }
     }
 
@@ -110,18 +123,6 @@ class MainActivity : AppCompatActivity() {
             .putString("chatId", chatId)
             .apply()
     }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (requestCode == SCREENSHOT_REQUEST) {
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                screenshotResultCode = resultCode
-                screenshotResultData = data
-                statusText.text = "Screenshot Permission Granted"
-            } else {
-                statusText.text = "Screenshot Permission Denied"
-            }
-        }
-    }
 }
+
+

