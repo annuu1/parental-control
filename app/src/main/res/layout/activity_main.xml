@@ -31,6 +31,12 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="Stop Sending"/>
+    <Button
+        android:id="@+id/screenshotButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Enable Screenshot Capture" />
+
 
     <TextView
         android:id="@+id/statusText"
