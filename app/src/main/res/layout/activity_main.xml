@@ -37,6 +37,28 @@
         android:layout_height="wrap_content"
         android:text="Enable Screenshot Capture" />
 
+    <Switch
+        android:id="@+id/cameraSwitch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Include Camera Photo (Front/Back) "
+        android:layout_marginTop="16dp"/>
+
+    <Button
+        android:id="@+id/downloadLogsButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="View/Share Logs"
+        android:layout_marginTop="16dp" />
+
+    <EditText
+        android:id="@+id/cameraIntervalEdit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Camera Interval (seconds, e.g., 300)"
+        android:inputType="number"
+        android:layout_marginTop="8dp"
+        android:visibility="gone" />
 
     <TextView
         android:id="@+id/statusText"

