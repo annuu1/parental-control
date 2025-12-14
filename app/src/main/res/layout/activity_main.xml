@@ -21,6 +21,13 @@
         android:inputType="text"/>
 
     <Button
+        android:id="@+id/testConnectionButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Test Connection (Send Hello)"
+        android:backgroundTint="#FF9800"/>
+
+    <Button
         android:id="@+id/startButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

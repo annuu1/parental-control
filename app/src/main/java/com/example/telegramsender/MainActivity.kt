@@ -11,6 +11,14 @@ import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import android.widget.Toast
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.FormBody
+import java.io.IOException
 
 class MainActivity : AppCompatActivity() {
 
@@ -48,6 +56,44 @@ class MainActivity : AppCompatActivity() {
         // ... (Xiaomi check) ...
         if (android.os.Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)) {
             Toast.makeText(this, "MIUI Detected: Please enable 'Autostart' and Lock the app in Recents to prevent stopping.", Toast.LENGTH_LONG).show()
+        }
+
+        findViewById<Button>(R.id.testConnectionButton).setOnClickListener {
+            val token = botTokenEdit.text.toString().trim()
+            val chatId = chatIdEdit.text.toString().trim()
+            
+            if (token.isEmpty() || chatId.isEmpty()) {
+                Toast.makeText(this, "Please enter Bot Token and Chat ID", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            
+            Toast.makeText(this, "Sending Test Message...", Toast.LENGTH_SHORT).show()
+            
+            val client = OkHttpClient()
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val url = "https://api.telegram.org/bot$token/sendMessage"
+                    val body = FormBody.Builder()
+                        .add("chat_id", chatId)
+                        .add("text", "Test Message from Telegram Sender App!\nEverything is working fine.")
+                        .build()
+                    val request = Request.Builder().url(url).post(body).build()
+                    
+                    client.newCall(request).execute().use { response ->
+                        withContext(Dispatchers.Main) {
+                            if (response.isSuccessful) {
+                                Toast.makeText(this@MainActivity, "Success! Message Sent.", Toast.LENGTH_LONG).show()
+                            } else {
+                                Toast.makeText(this@MainActivity, "Failed: ${response.code} ${response.message}", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
         }
 
         startButton.setOnClickListener {
