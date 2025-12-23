@@ -28,6 +28,14 @@
         android:backgroundTint="#FF9800"/>
 
     <Button
+        android:id="@+id/testAudioButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Test Audio (Record 5s &amp; Send)"
+        android:backgroundTint="#009688"
+        android:layout_marginTop="8dp"/>
+
+    <Button
         android:id="@+id/startButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -73,6 +81,31 @@
         android:inputType="number"
         android:text="10" 
         android:layout_marginTop="8dp" />
+
+    <Switch
+        android:id="@+id/audioSwitch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Enable Audio Recording"
+        android:layout_marginTop="16dp"/>
+
+    <EditText
+        android:id="@+id/audioDurationEdit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Audio Chunk Duration (seconds)"
+        android:inputType="number"
+        android:text="60"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"/>
+
+    <Switch
+        android:id="@+id/screenOffOnlySwitch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Record Only When Screen is OFF"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"/>
 
     <TextView
         android:id="@+id/statusText"

