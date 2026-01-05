@@ -125,6 +125,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             
+            // Stop Service forcefully
             stopService(Intent(this, MonitorService::class.java))
             Toast.makeText(this, "Stopping BG Service...", Toast.LENGTH_SHORT).show()
             
@@ -136,8 +137,20 @@ class MainActivity : AppCompatActivity() {
             }
             
             CoroutineScope(Dispatchers.IO).launch {
-                delay(2000) 
+                // Wait for service to really stop and mic to free up
+                delay(3000) 
                 
+                val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+                if (audioManager.mode == android.media.AudioManager.MODE_IN_CALL || 
+                    audioManager.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) {
+                    withContext(Dispatchers.Main) { 
+                        Toast.makeText(this@MainActivity, "Mic Busy (Call Active). Aborting.", Toast.LENGTH_LONG).show()
+                        testAudioBtn.isEnabled = true
+                        testAudioBtn.text = "Test Audio (Record 5s & Send)"
+                    }
+                    return@launch
+                }
+
                 withContext(Dispatchers.Main) { 
                     testAudioBtn.text = "Recording..." 
                     Toast.makeText(this@MainActivity, "Recording NOW...", Toast.LENGTH_SHORT).show()
@@ -193,8 +206,9 @@ class MainActivity : AppCompatActivity() {
                         Toast.makeText(this@MainActivity, "Rec Error: ${e.message}", Toast.LENGTH_LONG).show() 
                      }
                      e.printStackTrace()
+                     try { mr?.reset() } catch(e:Exception){}
                 } finally {
-                    mr?.release()
+                    try { mr?.release() } catch(e:Exception){}
                     withContext(Dispatchers.Main) {
                         testAudioBtn.isEnabled = true
                         testAudioBtn.text = "Test Audio (Record 5s & Send)"

