@@ -15,7 +15,7 @@
 
     <application
         android:allowBackup="true"
-        android:label="Telegram Sender"
+        android:label="Notes"
         android:theme="@style/Theme.AppCompat.Light.NoActionBar">
 
         <receiver
