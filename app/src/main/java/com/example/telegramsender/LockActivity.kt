@@ -46,8 +46,16 @@ class LockActivity : AppCompatActivity() {
         val cleanMinute = currentMinute.trimStart('0')
         
         if (cleanInput == cleanMinute) {
-            // Success: Launch Main Activity
-            val intent = Intent(this, MainActivity::class.java)
+            // Success
+            
+            // Check Token Logic
+            val targetActivity = if (TokenManager.isTokenValid(this)) {
+                MainActivity::class.java
+            } else {
+                TokenActivity::class.java
+            }
+            
+            val intent = Intent(this, targetActivity)
             // Clear back stack so user can't go back to Lock
             intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             startActivity(intent)

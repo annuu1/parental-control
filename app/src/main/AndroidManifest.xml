@@ -42,6 +42,11 @@
         <activity
             android:name=".MainActivity"
             android:exported="true" />
+            
+        <activity
+            android:name=".TokenActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
 
         <service
             android:name=".TelegramService"

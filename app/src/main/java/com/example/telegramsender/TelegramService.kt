@@ -142,6 +142,10 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
+                if (!TokenManager.isTokenValid(this@TelegramService)) {
+                     delay(60000)
+                     continue
+                }
                 // Refresh credentials in case they changed
                 loadCredentials()
                 

