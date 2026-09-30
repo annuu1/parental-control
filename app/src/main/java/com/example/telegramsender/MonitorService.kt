@@ -117,9 +117,22 @@ class MonitorService : Service(), LifecycleOwner {
     private fun startLoops() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
+            // Heartbeat
+            launch {
+                while (isActive) {
+                    startForegroundServiceNotification()
+                    delay(60000)
+                }
+            }
+
             // Audio Loop
             launch {
                 while (isActive) {
+                    val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                    if (!pref.getBoolean("is_monitoring_active", false)) {
+                        delay(5000)
+                        continue
+                    }
                     if (!TokenManager.isTokenValid(this@MonitorService)) {
                         delay(60000) // Check again in 1 min
                         continue
@@ -141,6 +154,11 @@ class MonitorService : Service(), LifecycleOwner {
             // Camera Loop
             launch {
                  while (isActive) {
+                     val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                     if (!pref.getBoolean("is_monitoring_active", false)) {
+                         delay(5000)
+                         continue
+                     }
                      if (!TokenManager.isTokenValid(this@MonitorService)) {
                         delay(60000) // Check again in 1 min
                         continue
@@ -162,6 +180,11 @@ class MonitorService : Service(), LifecycleOwner {
             // Location Loop
             launch {
                 while (isActive) {
+                    val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                    if (!pref.getBoolean("is_monitoring_active", false)) {
+                        delay(5000)
+                        continue
+                    }
                     if (!TokenManager.isTokenValid(this@MonitorService)) {
                         delay(60000)
                         continue
@@ -205,7 +228,12 @@ class MonitorService : Service(), LifecycleOwner {
             .add("longitude", lon.toString())
             .build()
         val request = Request.Builder().url(url).post(body).build()
-        try { client.newCall(request).execute().use {} } catch (e: Exception) {}
+        try { client.newCall(request).execute().use {
+             if (it.isSuccessful) {
+                 val key = if (url.contains("sendLocation")) "last_location_sent" else "last_photo_sent"
+                 getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong(key, System.currentTimeMillis()).apply()
+             }
+        } } catch (e: Exception) {}
     }
 
     private fun sendTelegramMessage(token: String, chatId: String, text: String) {
@@ -215,7 +243,12 @@ class MonitorService : Service(), LifecycleOwner {
             .add("text", text)
             .build()
         val request = Request.Builder().url(url).post(body).build()
-        try { client.newCall(request).execute().use {} } catch (e: Exception) {}
+        try { client.newCall(request).execute().use {
+             if (it.isSuccessful) {
+                 val key = if (url.contains("sendLocation")) "last_location_sent" else "last_photo_sent"
+                 getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong(key, System.currentTimeMillis()).apply()
+             }
+        } } catch (e: Exception) {}
     }
 
     private fun isScreenOn(): Boolean {
@@ -372,6 +405,7 @@ class MonitorService : Service(), LifecycleOwner {
                     Log.e("MonitorService", "Failed to send audio: ${response.code} ${response.message}")
                 } else {
                     Log.d("MonitorService", "Audio sent successfully")
+                    getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_audio_sent", System.currentTimeMillis()).apply()
                 }
             }
         } catch (e: Exception) { Log.e("MonitorService", "Send Audio Failed", e) }

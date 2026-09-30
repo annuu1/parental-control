@@ -47,19 +47,23 @@ class LockActivity : AppCompatActivity() {
         
         if (cleanInput == cleanMinute) {
             // Success
-            
-            // Check Token Logic
-            val targetActivity = if (TokenManager.isTokenValid(this)) {
-                MainActivity::class.java
-            } else {
-                TokenActivity::class.java
+            try {
+                // Check Token Logic
+                val targetActivity = if (TokenManager.isTokenValid(this)) {
+                    MainActivity::class.java
+                } else {
+                    TokenActivity::class.java
+                }
+                
+                val intent = Intent(this, targetActivity)
+                // Clear back stack so user can't go back to Lock
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                finish()
+            } catch (e: Exception) {
+                android.util.Log.e("LockActivity", "Transition failed", e)
+                android.widget.Toast.makeText(this, "Error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
-            
-            val intent = Intent(this, targetActivity)
-            // Clear back stack so user can't go back to Lock
-            intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-            startActivity(intent)
-            finish()
         } else {
             // Failure: Show funny animation/text
             showFunnyFeedback(enteredCode, funnyText)
