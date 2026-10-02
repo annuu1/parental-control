@@ -1,11 +1,12 @@
 package com.example.telegramsender
 
-import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
+import com.example.telegramsender.data.DevicePreferences
 import com.example.telegramsender.ui.*
+import com.example.telegramsender.worker.SyncScheduler
 import com.google.android.material.bottomnavigation.BottomNavigationView
 
 class MainActivity : AppCompatActivity() {
@@ -14,18 +15,29 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         try {
-            val pref = getSharedPreferences("tg_pref", Context.MODE_PRIVATE)
-            if (!pref.getBoolean("setup_complete", false)) {
+            // Check if device is paired with the web dashboard
+            if (!DevicePreferences.isRegistered(this)) {
                 startActivity(Intent(this, SetupWizardActivity::class.java))
                 finish()
                 return
             }
 
+            // Check if device is locked remotely
+            if (DevicePreferences.isLocked(this)) {
+                val lockIntent = Intent(this, LockActivity::class.java).apply {
+                    putExtra("LOCK_MESSAGE", DevicePreferences.getLockMessage(this@MainActivity))
+                }
+                startActivity(lockIntent)
+                finish()
+                return
+            }
+
+            // Ensure background sync scheduler is active
+            SyncScheduler.schedulePeriodicSync(this, DevicePreferences.getSyncInterval(this))
+
             setContentView(R.layout.activity_main)
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Launch failed", e)
-            android.widget.Toast.makeText(this, "Launch Fail: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
-            // If main failed, maybe try setup wizard directly?
             try {
                 startActivity(Intent(this, SetupWizardActivity::class.java))
                 finish()

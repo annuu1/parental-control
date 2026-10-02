@@ -58,6 +58,9 @@ dependencies {
     implementation("androidx.camera:camera-view:1.3.1")
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
 
+    // WorkManager (Battery-efficient background sync)
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
+
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

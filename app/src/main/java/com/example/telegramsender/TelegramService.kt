@@ -168,7 +168,7 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                     delay(5000)
                     continue
                 }
-                if (!TokenManager.isTokenValid(this@TelegramService)) {
+                if (!com.example.telegramsender.data.DevicePreferences.isRegistered(this@TelegramService)) {
                      delay(60000)
                      continue
                 }

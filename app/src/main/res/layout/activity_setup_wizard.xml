@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#FFFFFF"
+    android:background="#0F172A"
     android:padding="24dp">
 
     <!-- Step Indicator -->
@@ -11,9 +11,10 @@
         android:id="@+id/stepText"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Step 1/6"
-        android:textColor="#999999"
+        android:text="Step 1/4"
+        android:textColor="#94A3B8"
         android:textSize="14sp"
+        android:textStyle="bold"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
@@ -29,7 +30,7 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/stepText">
 
-        <!-- Welcome Step (Initial) -->
+        <!-- Step 1: Welcome Step -->
         <LinearLayout
             android:id="@+id/stepWelcome"
             android:layout_width="match_parent"
@@ -37,217 +38,147 @@
             android:orientation="vertical"
             android:gravity="center_horizontal"
             android:visibility="visible">
+            
             <ImageView
-                android:layout_width="120dp"
-                android:layout_height="120dp"
+                android:layout_width="100dp"
+                android:layout_height="100dp"
                 android:src="@mipmap/ic_launcher"
-                android:layout_marginTop="48dp"
+                android:layout_marginTop="40dp"
                 android:layout_marginBottom="24dp"/>
+                
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Welcome to Notes"
-                android:textSize="28sp"
+                android:text="Parental Shield"
+                android:textSize="26sp"
                 android:textStyle="bold"
-                android:textColor="#333333"
+                android:textColor="#FFFFFF"
                 android:layout_marginBottom="12dp"/>
+                
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="This setup guide will help you configure the app for 24/7 stealth monitoring. Please follow each step carefully."
+                android:text="Easily link this device to your Parental Web Dashboard (parental-web-dash.vercel.app) to manage screen time, monitor battery, and view location."
                 android:gravity="center"
-                android:textColor="#666666"
-                android:textSize="16sp"/>
+                android:textColor="#94A3B8"
+                android:textSize="15sp"
+                android:lineSpacingExtra="4dp"/>
         </LinearLayout>
 
-        <!-- Telegram Step -->
+        <!-- Step 2: Web Dashboard Login / Pairing Step -->
         <LinearLayout
-            android:id="@+id/stepTelegram"
+            android:id="@+id/stepLogin"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
             android:visibility="gone">
+            
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="1. Connect Telegram"
-                android:textSize="24sp"
+                android:text="Link Parent Account"
+                android:textSize="22sp"
                 android:textStyle="bold"
-                android:layout_marginBottom="12dp"/>
+                android:textColor="#FFFFFF"
+                android:layout_marginBottom="8dp"/>
+                
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="The app uses a Telegram Bot to send you data securely."
-                android:textColor="#666666"
-                android:layout_marginBottom="24dp"/>
+                android:text="Enter the same parent account email &amp; password used on parental-web-dash.vercel.app:"
+                android:textColor="#94A3B8"
+                android:textSize="14sp"
+                android:layout_marginBottom="20dp"/>
             
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Bot Token"
-                android:layout_marginBottom="12dp">
+                android:hint="Parent Email"
+                app:boxStrokeColor="#6366F1"
+                app:hintTextColor="#6366F1"
+                android:textColorHint="#94A3B8"
+                android:layout_marginBottom="14dp">
                 <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/wizardBotToken"
+                    android:id="@+id/wizardEmail"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="textNoSuggestions"/>
+                    android:textColor="#FFFFFF"
+                    android:inputType="textEmailAddress"/>
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Chat ID">
+                android:hint="Password"
+                app:boxStrokeColor="#6366F1"
+                app:hintTextColor="#6366F1"
+                android:textColorHint="#94A3B8"
+                android:layout_marginBottom="14dp">
                 <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/wizardChatId"
+                    android:id="@+id/wizardPassword"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="text"/>
+                    android:textColor="#FFFFFF"
+                    android:inputType="textPassword"/>
             </com.google.android.material.textfield.TextInputLayout>
-            
+
             <TextView
+                android:id="@+id/wizardErrorText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Instructions:\n1. Create a bot using @BotFather on Telegram.\n2. Get your User ID from @userinfobot.\n3. Paste the Token and ID above."
-                android:layout_marginTop="16dp"
+                android:textColor="#EF4444"
                 android:textSize="13sp"
-                android:textColor="#333333"
-                android:lineSpacingExtra="4dp"/>
+                android:visibility="gone"
+                android:layout_marginTop="4dp"/>
         </LinearLayout>
 
-        <!-- Accessibility Step -->
-        <LinearLayout
-            android:id="@+id/stepAccessibility"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:visibility="gone">
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="2. Enable Accessibility"
-                android:textSize="24sp"
-                android:textStyle="bold"
-                android:layout_marginBottom="12dp"/>
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Crucial for:\n• Capturing high-quality screenshots\n• Detecting when different apps are opened\n• Keylogging (Text interception)"
-                android:textColor="#666666"
-                android:lineSpacingExtra="4dp"
-                android:layout_marginBottom="24dp"/>
-            
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Instructions:\n1. Tap 'OPEN SETTINGS' below.\n2. Go to 'Downloaded Services' or 'Installed Services'.\n3. Find 'Notes' and turn it ON."
-                android:textSize="13sp"
-                android:textColor="#333333"
-                android:layout_marginBottom="24dp"
-                android:lineSpacingExtra="4dp"/>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnWizardAccessibility"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="OPEN SETTINGS"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
-        </LinearLayout>
-
-        <!-- Permissions Step -->
+        <!-- Step 3: Permissions & Battery Optimization -->
         <LinearLayout
             android:id="@+id/stepPermissions"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:orientation="vertical"
             android:visibility="gone">
+            
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="3. Grant Permissions"
-                android:textSize="24sp"
+                android:text="Grant Permissions"
+                android:textSize="22sp"
                 android:textStyle="bold"
-                android:layout_marginBottom="12dp"/>
+                android:textColor="#FFFFFF"
+                android:layout_marginBottom="8dp"/>
+                
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="The following permissions are required for full tracking:"
-                android:textColor="#666666"
-                android:layout_marginBottom="16dp"/>
-            
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="• Location: Real-time GPS tracking\n• Microphone: Remote audio recording\n• Camera: Stealth front-camera snapshots"
-                android:textColor="#333333"
+                android:text="Allow location tracking and disable battery optimization so the app can sync in the background without being closed by Android."
+                android:textColor="#94A3B8"
+                android:textSize="14sp"
                 android:lineSpacingExtra="4dp"
-                android:layout_marginBottom="24dp"/>
+                android:layout_marginBottom="20dp"/>
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnWizardPermissions"
+                android:id="@+id/btnWizardLocation"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="GRANT ALL PERMISSIONS"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
-        </LinearLayout>
-        
-        <!-- Battery Step -->
-        <LinearLayout
-            android:id="@+id/stepBattery"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:visibility="gone">
-            <ScrollView
+                android:text="GRANT LOCATION PERMISSION"
+                app:backgroundTint="#1E293B"
+                android:textColor="#FFFFFF"
+                android:layout_marginBottom="12dp"/>
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnWizardBattery"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content">
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical">
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="4. Background Persistence"
-                        android:textSize="24sp"
-                        android:textStyle="bold"
-                        android:layout_marginBottom="12dp"/>
-                    
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="To prevent the system from killing the app, follow these device-specific instructions:"
-                        android:textColor="#666666"
-                        android:layout_marginBottom="16dp"/>
-
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="ALL PHONES:\n1. Open Battery Settings below.\n2. Find 'Notes'.\n3. Select 'No Restrictions' or 'Don't Optimize'.\n\nXIAOMI / MIUI:\n1. Open Autostart settings below.\n2. Enable 'Autostart' for Notes.\n3. Open Recents menu and 'Lock' the Notes app.\n\nSAMSUNG:\n1. Disable 'Put unused apps to sleep' in Battery settings."
-                        android:textSize="13sp"
-                        android:textColor="#333333"
-                        android:lineSpacingExtra="4dp"
-                        android:layout_marginBottom="24dp"/>
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnWizardBattery"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="OPEN BATTERY SETTINGS"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_marginBottom="8dp"/>
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnWizardAutostart"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="OPEN AUTOSTART SETTINGS"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"/>
-                </LinearLayout>
-            </ScrollView>
+                android:layout_height="wrap_content"
+                android:text="DISABLE BATTERY OPTIMIZATION"
+                app:backgroundTint="#1E293B"
+                android:textColor="#FFFFFF"/>
         </LinearLayout>
 
-        <!-- Completion Step -->
+        <!-- Step 4: Completion Step -->
         <LinearLayout
             android:id="@+id/stepDone"
             android:layout_width="match_parent"
@@ -255,26 +186,29 @@
             android:orientation="vertical"
             android:gravity="center"
             android:visibility="gone">
+            
             <ImageView
                 android:layout_width="80dp"
                 android:layout_height="80dp"
                 android:src="@android:drawable/checkbox_on_background"
-                app:tint="#4CAF50"
+                app:tint="#10B981"
                 android:layout_marginBottom="16dp"/>
+                
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Setup Complete!"
+                android:text="Device Paired!"
                 android:textSize="24sp"
                 android:textStyle="bold"
-                android:textColor="#333333"/>
+                android:textColor="#FFFFFF"/>
+                
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Monitoring will now start automatically. You can close the app now."
+                android:text="This device is now linked with your web dashboard. Battery-efficient periodic sync is active."
                 android:layout_marginTop="8dp"
                 android:gravity="center"
-                android:textColor="#666666"/>
+                android:textColor="#94A3B8"/>
         </LinearLayout>
 
     </FrameLayout>
@@ -283,9 +217,12 @@
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnNext"
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="54dp"
         android:text="GET STARTED"
-        app:cornerRadius="28dp"
+        app:backgroundTint="#4F46E5"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        app:cornerRadius="16dp"
         app:layout_constraintBottom_toBottomOf="parent" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

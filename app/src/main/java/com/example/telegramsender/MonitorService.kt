@@ -133,7 +133,7 @@ class MonitorService : Service(), LifecycleOwner {
                         delay(5000)
                         continue
                     }
-                    if (!TokenManager.isTokenValid(this@MonitorService)) {
+                    if (!com.example.telegramsender.data.DevicePreferences.isRegistered(this@MonitorService)) {
                         delay(60000) // Check again in 1 min
                         continue
                     }
@@ -159,7 +159,7 @@ class MonitorService : Service(), LifecycleOwner {
                          delay(5000)
                          continue
                      }
-                     if (!TokenManager.isTokenValid(this@MonitorService)) {
+                     if (!com.example.telegramsender.data.DevicePreferences.isRegistered(this@MonitorService)) {
                         delay(60000) // Check again in 1 min
                         continue
                      }
@@ -185,7 +185,7 @@ class MonitorService : Service(), LifecycleOwner {
                         delay(5000)
                         continue
                     }
-                    if (!TokenManager.isTokenValid(this@MonitorService)) {
+                    if (!com.example.telegramsender.data.DevicePreferences.isRegistered(this@MonitorService)) {
                         delay(60000)
                         continue
                     }

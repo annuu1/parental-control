@@ -2,13 +2,13 @@ package com.example.telegramsender
 
 import android.content.Intent
 import android.os.Bundle
-import android.text.Editable
-import android.text.TextWatcher
 import android.view.KeyEvent
 import android.view.inputmethod.EditorInfo
 import android.widget.EditText
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.example.telegramsender.data.DevicePreferences
+import com.example.telegramsender.ui.SetupWizardActivity
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -23,9 +23,15 @@ class LockActivity : AppCompatActivity() {
         val input = findViewById<EditText>(R.id.codeParams)
         val funnyText = findViewById<TextView>(R.id.funnyText)
         
+        // Show custom lock message if passed or saved
+        val customMsg = intent.getStringExtra("LOCK_MESSAGE") ?: DevicePreferences.getLockMessage(this)
+        if (customMsg.isNotEmpty() && funnyText != null) {
+            funnyText.text = customMsg
+        }
+
         input.requestFocus()
 
-        input.setOnEditorActionListener { v, actionId, event ->
+        input.setOnEditorActionListener { _, actionId, event ->
             if (actionId == EditorInfo.IME_ACTION_DONE || 
                 (event != null && event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
                 
@@ -34,7 +40,6 @@ class LockActivity : AppCompatActivity() {
             }
             false
         }
-        
     }
     
     private fun checkCode(enteredCode: String, funnyText: TextView) {
@@ -46,18 +51,20 @@ class LockActivity : AppCompatActivity() {
         val cleanMinute = currentMinute.trimStart('0')
         
         if (cleanInput == cleanMinute) {
-            // Success
+            // Unlocked successfully: clear lock state
+            DevicePreferences.setLocked(this, false)
+
             try {
-                // Check Token Logic
-                val targetActivity = if (TokenManager.isTokenValid(this)) {
+                // Route to MainActivity if already registered, otherwise SetupWizardActivity
+                val targetActivity = if (DevicePreferences.isRegistered(this)) {
                     MainActivity::class.java
                 } else {
-                    TokenActivity::class.java
+                    SetupWizardActivity::class.java
                 }
                 
-                val intent = Intent(this, targetActivity)
-                // Clear back stack so user can't go back to Lock
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                val intent = Intent(this, targetActivity).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
                 startActivity(intent)
                 finish()
             } catch (e: Exception) {
@@ -65,7 +72,7 @@ class LockActivity : AppCompatActivity() {
                 android.widget.Toast.makeText(this, "Error: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
         } else {
-            // Failure: Show funny animation/text
+            // Failure feedback
             showFunnyFeedback(enteredCode, funnyText)
         }
     }
@@ -94,13 +101,10 @@ class LockActivity : AppCompatActivity() {
             }
             .start()
             
-        // Clear input for next try
         findViewById<EditText>(R.id.codeParams).text.clear()
     }
     
-    // Prevent back button
     override fun onBackPressed() {
-       // Do nothing or minimize
-       super.onBackPressed()
+       // Prevent dismissing lock with back button
     }
 }
