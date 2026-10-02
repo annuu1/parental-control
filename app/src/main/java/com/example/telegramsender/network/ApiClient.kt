@@ -126,6 +126,7 @@ object ApiClient {
         latitude: Double? = null,
         longitude: Double? = null,
         accuracy: Float? = null,
+        health: JSONObject? = null,
         executedCommandIds: List<String> = emptyList(),
         appVersion: String = "1.0.0"
     ): SyncResult {
@@ -134,6 +135,10 @@ object ApiClient {
                 put("batteryLevel", batteryLevel)
                 put("isCharging", isCharging)
                 put("appVersion", appVersion)
+
+                if (health != null) {
+                    put("health", health)
+                }
 
                 if (latitude != null && longitude != null) {
                     val locJson = JSONObject().apply {

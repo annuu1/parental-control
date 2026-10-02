@@ -46,40 +46,19 @@ class SyncWorker(
             val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING ||
                              status == BatteryManager.BATTERY_STATUS_FULL
 
-            // 2. Gather Location (if permitted)
-            var lat: Double? = null
-            var lon: Double? = null
-            var accuracy: Float? = null
+            // 2. High-Accuracy Location Fetch
+            val loc = com.example.telegramsender.utils.LocationHelper.getBestLocation(context)
+            val lat: Double? = loc?.latitude
+            val lon: Double? = loc?.longitude
+            val accuracy: Float? = loc?.accuracy
 
-            val hasFine = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-            val hasCoarse = ContextCompat.checkSelfPermission(context, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            // 3. Health & Permissions Check
+            val healthJson = com.example.telegramsender.utils.DeviceHealthHelper.getDeviceHealth(context).toJsonObject()
 
-            if (hasFine || hasCoarse) {
-                try {
-                    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-                    if (lm != null) {
-                        var bestLocation: Location? = null
-                        for (provider in lm.getProviders(true)) {
-                            val l = lm.getLastKnownLocation(provider) ?: continue
-                            if (bestLocation == null || l.accuracy < bestLocation.accuracy) {
-                                bestLocation = l
-                            }
-                        }
-                        if (bestLocation != null) {
-                            lat = bestLocation.latitude
-                            lon = bestLocation.longitude
-                            accuracy = bestLocation.accuracy
-                        }
-                    }
-                } catch (e: SecurityException) {
-                    Log.w(TAG, "Location permission missing or disabled", e)
-                }
-            }
-
-            // 3. Pop previously executed commands to acknowledge
+            // 4. Pop previously executed commands to acknowledge
             val executedIds = DevicePreferences.getAndClearExecutedCommands(context)
 
-            // 4. Send Unified Heartbeat
+            // 5. Send Unified Heartbeat
             val result = ApiClient.syncDevice(
                 deviceJwt = jwt,
                 batteryLevel = batteryPct,
@@ -87,6 +66,7 @@ class SyncWorker(
                 latitude = lat,
                 longitude = lon,
                 accuracy = accuracy,
+                health = healthJson,
                 executedCommandIds = executedIds
             )
 

