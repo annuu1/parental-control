@@ -126,12 +126,21 @@ class SetupWizardActivity : AppCompatActivity() {
                                 deviceToken = result.deviceToken ?: "",
                                 parentEmail = email,
                                 deviceName = deviceName,
-                                intervalMinutes = result.syncIntervalMinutes
+                                intervalSeconds = result.syncIntervalMinutes * 60L
                             )
 
                             // Start background sync scheduler
                             SyncScheduler.schedulePeriodicSync(this@SetupWizardActivity, result.syncIntervalMinutes)
                             SyncScheduler.triggerImmediateSync(this@SetupWizardActivity)
+
+                            try {
+                                val monitorIntent = Intent(this@SetupWizardActivity, com.example.telegramsender.MonitorService::class.java)
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    startForegroundService(monitorIntent)
+                                } else {
+                                    startService(monitorIntent)
+                                }
+                            } catch (e: Exception) {}
 
                             currentStep = 3 // Go to Permissions
                             updateStepVisibility()

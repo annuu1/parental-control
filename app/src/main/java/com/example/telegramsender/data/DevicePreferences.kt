@@ -10,6 +10,7 @@ object DevicePreferences {
     private const val KEY_DEVICE_TOKEN = "device_token"
     private const val KEY_PARENT_EMAIL = "parent_email"
     private const val KEY_DEVICE_NAME = "device_name"
+    private const val KEY_SYNC_INTERVAL_SECONDS = "sync_interval_seconds"
     private const val KEY_SYNC_INTERVAL = "sync_interval_mins"
     private const val KEY_IS_LOCKED = "is_locked"
     private const val KEY_LOCK_MESSAGE = "lock_message"
@@ -32,15 +33,17 @@ object DevicePreferences {
         deviceToken: String,
         parentEmail: String,
         deviceName: String,
-        intervalMinutes: Long
+        intervalSeconds: Long
     ) {
+        val safeSeconds = Math.max(5L, intervalSeconds)
         getPrefs(context).edit()
             .putString(KEY_DEVICE_JWT, jwt)
             .putString(KEY_DEVICE_ID, deviceId)
             .putString(KEY_DEVICE_TOKEN, deviceToken)
             .putString(KEY_PARENT_EMAIL, parentEmail)
             .putString(KEY_DEVICE_NAME, deviceName)
-            .putLong(KEY_SYNC_INTERVAL, intervalMinutes)
+            .putLong(KEY_SYNC_INTERVAL_SECONDS, safeSeconds)
+            .putLong(KEY_SYNC_INTERVAL, Math.max(1L, safeSeconds / 60))
             .putBoolean("setup_complete", true)
             .apply()
     }
@@ -57,12 +60,27 @@ object DevicePreferences {
         return getPrefs(context).getString(KEY_PARENT_EMAIL, null)
     }
 
+    fun getSyncIntervalSeconds(context: Context): Long {
+        val sec = getPrefs(context).getLong(KEY_SYNC_INTERVAL_SECONDS, 0L)
+        if (sec >= 5L) return sec
+        val mins = getPrefs(context).getLong(KEY_SYNC_INTERVAL, 1L)
+        return Math.max(5L, mins * 60)
+    }
+
+    fun setSyncIntervalSeconds(context: Context, intervalSeconds: Long) {
+        val safeSeconds = Math.max(5L, intervalSeconds)
+        getPrefs(context).edit()
+            .putLong(KEY_SYNC_INTERVAL_SECONDS, safeSeconds)
+            .putLong(KEY_SYNC_INTERVAL, Math.max(1L, safeSeconds / 60))
+            .apply()
+    }
+
     fun getSyncInterval(context: Context): Long {
-        return getPrefs(context).getLong(KEY_SYNC_INTERVAL, 15L)
+        return Math.max(1L, getSyncIntervalSeconds(context) / 60)
     }
 
     fun setSyncInterval(context: Context, intervalMinutes: Long) {
-        getPrefs(context).edit().putLong(KEY_SYNC_INTERVAL, intervalMinutes).apply()
+        setSyncIntervalSeconds(context, intervalMinutes * 60)
     }
 
     fun isLocked(context: Context): Boolean {

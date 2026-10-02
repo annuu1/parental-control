@@ -30,7 +30,8 @@ object ApiClient {
     )
 
     data class SyncConfigDto(
-        val syncIntervalMinutes: Long = 15,
+        val syncIntervalSeconds: Long = 5,
+        val syncIntervalMinutes: Long = 1,
         val telegramBotToken: String = "",
         val telegramChatId: String = "",
         val isMonitoringActive: Boolean = true,
@@ -167,7 +168,8 @@ object ApiClient {
                     val configJson = resJson.optJSONObject("config")
 
                     val config = SyncConfigDto(
-                        syncIntervalMinutes = configJson?.optLong("syncIntervalMinutes", 15L) ?: 15L,
+                        syncIntervalSeconds = configJson?.optLong("syncIntervalSeconds", 5L) ?: 5L,
+                        syncIntervalMinutes = configJson?.optLong("syncIntervalMinutes", 1L) ?: 1L,
                         telegramBotToken = configJson?.optString("telegramBotToken", "") ?: "",
                         telegramChatId = configJson?.optString("telegramChatId", "") ?: "",
                         isMonitoringActive = configJson?.optBoolean("isMonitoringActive", true) ?: true,

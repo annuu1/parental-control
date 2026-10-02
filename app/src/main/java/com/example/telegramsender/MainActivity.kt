@@ -35,6 +35,18 @@ class MainActivity : AppCompatActivity() {
             // Ensure background sync scheduler is active
             SyncScheduler.schedulePeriodicSync(this, DevicePreferences.getSyncInterval(this))
 
+            // Ensure MonitorService is running for fast 5s sync and reporting
+            try {
+                val monitorIntent = Intent(this, MonitorService::class.java)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    startForegroundService(monitorIntent)
+                } else {
+                    startService(monitorIntent)
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Failed to start MonitorService", e)
+            }
+
             setContentView(R.layout.activity_main)
         } catch (e: Exception) {
             android.util.Log.e("MainActivity", "Launch failed", e)

