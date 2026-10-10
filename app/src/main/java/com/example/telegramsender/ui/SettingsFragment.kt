@@ -7,12 +7,20 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
-import com.example.telegramsender.MonitorService
+import androidx.lifecycle.lifecycleScope
 import com.example.telegramsender.R
+import com.example.telegramsender.data.DevicePreferences
+import com.example.telegramsender.utils.SyncHelper
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.textfield.TextInputEditText
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.*
 
 class SettingsFragment : Fragment() {
 
@@ -21,9 +29,18 @@ class SettingsFragment : Fragment() {
     private lateinit var chatIdEdit: TextInputEditText
     private lateinit var btnSave: MaterialButton
 
+    private lateinit var settingsLinkedAccount: TextView
+    private lateinit var settingsLastSync: TextView
+    private lateinit var btnSettingsSyncNow: MaterialButton
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         val view = inflater.inflate(R.layout.fragment_settings, container, false)
         pref = requireContext().getSharedPreferences("tg_pref", Context.MODE_PRIVATE)
+
+        // Cloud sync views
+        settingsLinkedAccount = view.findViewById(R.id.settingsLinkedAccount)
+        settingsLastSync = view.findViewById(R.id.settingsLastSync)
+        btnSettingsSyncNow = view.findViewById(R.id.btnSettingsSyncNow)
 
         botTokenEdit = view.findViewById(R.id.settingsBotToken)
         chatIdEdit = view.findViewById(R.id.settingsChatId)
@@ -42,6 +59,10 @@ class SettingsFragment : Fragment() {
             Toast.makeText(requireContext(), "Telegram settings saved", Toast.LENGTH_SHORT).show()
         }
 
+        btnSettingsSyncNow.setOnClickListener {
+            performManualSync()
+        }
+
         // Diagnostics
         view.findViewById<MaterialButton>(R.id.btnRunSetupWizard).setOnClickListener {
             startActivity(Intent(requireContext(), SetupWizardActivity::class.java))
@@ -53,14 +74,12 @@ class SettingsFragment : Fragment() {
         }
 
         view.findViewById<MaterialButton>(R.id.btnDiagLocation).setOnClickListener {
-            // Need a way to trigger this from fragment... 
-            // For simplicity, just show a message or use a direct method if possible.
-            // Actually, we can just trigger a one-time work or use a broadcast if we add it.
-            Toast.makeText(requireContext(), "Test location feature not implemented in this view yet", Toast.LENGTH_SHORT).show()
+            requireContext().sendBroadcast(Intent("com.example.telegramsender.ACTION_FORCE_LOCATION"))
+            Toast.makeText(requireContext(), "Location update broadcast sent", Toast.LENGTH_SHORT).show()
         }
 
         view.findViewById<MaterialButton>(R.id.btnDiagAudio).setOnClickListener {
-             Toast.makeText(requireContext(), "Test audio feature not implemented in this view yet", Toast.LENGTH_SHORT).show()
+            Toast.makeText(requireContext(), "Audio recording is managed by background service", Toast.LENGTH_SHORT).show()
         }
 
         view.findViewById<MaterialButton>(R.id.btnDiagForceLogs).setOnClickListener {
@@ -68,6 +87,67 @@ class SettingsFragment : Fragment() {
             Toast.makeText(requireContext(), "Force log upload requested", Toast.LENGTH_SHORT).show()
         }
 
+        updateSyncInfo()
         return view
+    }
+
+    override fun onResume() {
+        super.onResume()
+        updateSyncInfo()
+        botTokenEdit.setText(pref.getString("token", ""))
+        chatIdEdit.setText(pref.getString("chatId", ""))
+    }
+
+    private fun updateSyncInfo() {
+        val isRegistered = DevicePreferences.isRegistered(requireContext())
+        if (!isRegistered) {
+            settingsLinkedAccount.text = "Account: Not paired with dashboard"
+            settingsLastSync.text = "Last Synced: Run setup wizard to pair"
+            return
+        }
+
+        val email = DevicePreferences.getParentEmail(requireContext()) ?: "Parent Account"
+        settingsLinkedAccount.text = "Account: $email"
+
+        val lastSync = DevicePreferences.getLastSyncTime(requireContext())
+        if (lastSync == 0L) {
+            settingsLastSync.text = "Last Synced: Never (Waiting for initial heartbeat)"
+        } else {
+            val exact = SimpleDateFormat("h:mm:ss a, MMM d", Locale.getDefault()).format(Date(lastSync))
+            val diffSec = (System.currentTimeMillis() - lastSync) / 1000
+            val relative = when {
+                diffSec < 60 -> "${diffSec}s ago"
+                diffSec < 3600 -> "${diffSec / 60}m ago"
+                else -> "${diffSec / 3600}h ago"
+            }
+            settingsLastSync.text = "Last Synced: $relative ($exact)"
+        }
+    }
+
+    private fun performManualSync() {
+        if (!DevicePreferences.isRegistered(requireContext())) {
+            startActivity(Intent(requireContext(), SetupWizardActivity::class.java))
+            return
+        }
+
+        btnSettingsSyncNow.isEnabled = false
+        btnSettingsSyncNow.text = "SYNCING..."
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = SyncHelper.performSync(requireContext())
+            withContext(Dispatchers.Main) {
+                btnSettingsSyncNow.isEnabled = true
+                btnSettingsSyncNow.text = "SYNC WITH DASHBOARD NOW"
+                updateSyncInfo()
+                botTokenEdit.setText(pref.getString("token", ""))
+                chatIdEdit.setText(pref.getString("chatId", ""))
+
+                if (result.success) {
+                    Toast.makeText(requireContext(), "✓ Dashboard Sync successful!", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(requireContext(), "Sync error: ${result.errorMessage}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
     }
 }

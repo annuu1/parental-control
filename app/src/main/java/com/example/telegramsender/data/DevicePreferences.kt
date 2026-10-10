@@ -15,6 +15,9 @@ object DevicePreferences {
     private const val KEY_IS_LOCKED = "is_locked"
     private const val KEY_LOCK_MESSAGE = "lock_message"
     private const val KEY_LAST_SYNC_TIME = "last_sync_time"
+    private const val KEY_LAST_SYNC_STATUS = "last_sync_status"
+    private const val KEY_LAST_SYNC_ERROR = "last_sync_error"
+    private const val KEY_LAST_SYNC_SUMMARY = "last_sync_summary"
     private const val KEY_EXECUTED_COMMANDS = "executed_commands_set"
 
     private fun getPrefs(context: Context): SharedPreferences {
@@ -106,6 +109,30 @@ object DevicePreferences {
 
     fun getLastSyncTime(context: Context): Long {
         return getPrefs(context).getLong(KEY_LAST_SYNC_TIME, 0L)
+    }
+
+    fun setLastSyncStatus(context: Context, status: String) {
+        getPrefs(context).edit().putString(KEY_LAST_SYNC_STATUS, status).apply()
+    }
+
+    fun getLastSyncStatus(context: Context): String {
+        return getPrefs(context).getString(KEY_LAST_SYNC_STATUS, "IDLE") ?: "IDLE"
+    }
+
+    fun setLastSyncError(context: Context, error: String?) {
+        getPrefs(context).edit().putString(KEY_LAST_SYNC_ERROR, error).apply()
+    }
+
+    fun getLastSyncError(context: Context): String? {
+        return getPrefs(context).getString(KEY_LAST_SYNC_ERROR, null)
+    }
+
+    fun setLastSyncSummary(context: Context, summary: String) {
+        getPrefs(context).edit().putString(KEY_LAST_SYNC_SUMMARY, summary).apply()
+    }
+
+    fun getLastSyncSummary(context: Context): String? {
+        return getPrefs(context).getString(KEY_LAST_SYNC_SUMMARY, null)
     }
 
     fun addExecutedCommand(context: Context, commandId: String) {

