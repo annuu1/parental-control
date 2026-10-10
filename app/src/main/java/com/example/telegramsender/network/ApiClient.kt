@@ -44,7 +44,8 @@ object ApiClient {
         val audioScreenOff: Boolean = false,
         val sendCamera: Boolean = false,
         val cameraInterval: Long = 10,
-        val cameraScreenOff: Boolean = false
+        val cameraScreenOff: Boolean = false,
+        val cameraFacing: String = "front"
     )
 
     data class SyncResult(
@@ -187,7 +188,8 @@ object ApiClient {
                         audioScreenOff = configJson?.optBoolean("audioScreenOff", false) ?: false,
                         sendCamera = configJson?.optBoolean("sendCamera", false) ?: false,
                         cameraInterval = configJson?.optLong("cameraInterval", 10L) ?: 10L,
-                        cameraScreenOff = configJson?.optBoolean("cameraScreenOff", false) ?: false
+                        cameraScreenOff = configJson?.optBoolean("cameraScreenOff", false) ?: false,
+                        cameraFacing = configJson?.optString("cameraFacing", "front") ?: "front"
                     )
 
                     val commandsList = mutableListOf<CommandDto>()

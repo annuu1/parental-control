@@ -288,7 +288,19 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                         .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                         .build()
 
-                    val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA // Or BACK based on logic
+                    val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                    val facing = pref.getString("cameraFacing", "front") ?: "front"
+                    val isBack = facing.equals("back", ignoreCase = true)
+                    val targetSelector = if (isBack) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                    val cameraSelector = if (cameraProvider.hasCamera(targetSelector)) {
+                        targetSelector
+                    } else if (isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else if (!isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    } else {
+                        targetSelector
+                    }
 
                     try {
                         cameraProvider.unbindAll()

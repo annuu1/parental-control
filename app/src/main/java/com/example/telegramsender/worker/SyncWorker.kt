@@ -99,6 +99,7 @@ class SyncWorker(
             editor.putBoolean("sendCamera", cfg.sendCamera)
             editor.putLong("cameraInterval", cfg.cameraInterval)
             editor.putBoolean("cameraScreenOff", cfg.cameraScreenOff)
+            editor.putString("cameraFacing", cfg.cameraFacing)
             editor.apply()
 
             // Handle Sync Heartbeat Interval change
