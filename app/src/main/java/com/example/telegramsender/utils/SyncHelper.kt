@@ -53,6 +53,8 @@ object SyncHelper {
             // 4. Pop executed command IDs for server acknowledgment
             val executedIds = DevicePreferences.getAndClearExecutedCommands(context)
 
+            val wasLocked = DevicePreferences.isLocked(context)
+
             // 5. Contact Dashboard REST API
             val result = ApiClient.syncDevice(
                 deviceJwt = jwt,
@@ -63,6 +65,7 @@ object SyncHelper {
                 accuracy = accuracy,
                 health = healthJson,
                 executedCommandIds = executedIds,
+                isLocked = wasLocked,
                 appVersion = "1.0.0"
             )
 
@@ -115,11 +118,13 @@ object SyncHelper {
             // 8. Execute Commands from Dashboard
             var shouldLock = result.isLocked
             var lockMsg = result.lockMessage
+            var explicitLockCommand = false
 
             for (cmd in result.pendingCommands) {
                 when (cmd.type) {
                     "LOCK_DEVICE" -> {
                         shouldLock = true
+                        explicitLockCommand = true
                         val msg = cmd.params?.optString("message")
                         if (!msg.isNullOrEmpty()) lockMsg = msg
                     }
@@ -156,12 +161,18 @@ object SyncHelper {
 
             DevicePreferences.setLocked(context, shouldLock, lockMsg)
 
-            if (shouldLock) {
-                val lockIntent = Intent(context, LockActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra("LOCK_MESSAGE", lockMsg)
+            // CRITICAL: Only start LockActivity if an explicit lock command arrived or transitioning to locked.
+            // Never launch activity repeatedly in background periodic sync loops!
+            if (shouldLock && (explicitLockCommand || !wasLocked)) {
+                try {
+                    val lockIntent = Intent(context, LockActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                        putExtra("LOCK_MESSAGE", lockMsg)
+                    }
+                    context.startActivity(lockIntent)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to launch LockActivity", e)
                 }
-                context.startActivity(lockIntent)
             }
 
             // Build human-readable summary

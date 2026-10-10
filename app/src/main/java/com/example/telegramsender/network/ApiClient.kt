@@ -129,6 +129,7 @@ object ApiClient {
         accuracy: Float? = null,
         health: JSONObject? = null,
         executedCommandIds: List<String> = emptyList(),
+        isLocked: Boolean? = null,
         appVersion: String = "1.0.0"
     ): SyncResult {
         return try {
@@ -136,6 +137,9 @@ object ApiClient {
                 put("batteryLevel", batteryLevel)
                 put("isCharging", isCharging)
                 put("appVersion", appVersion)
+                if (isLocked != null) {
+                    put("isLocked", isLocked)
+                }
 
                 if (health != null) {
                     put("health", health)
