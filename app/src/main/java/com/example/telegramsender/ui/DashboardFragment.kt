@@ -19,6 +19,7 @@ import com.example.telegramsender.MonitorService
 import com.example.telegramsender.R
 import com.example.telegramsender.TelegramService
 import com.example.telegramsender.data.DevicePreferences
+import com.example.telegramsender.utils.OfflineQueueManager
 import com.example.telegramsender.utils.SyncHelper
 import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,7 @@ class DashboardFragment : Fragment() {
     private lateinit var syncAccountText: TextView
     private lateinit var syncLastTimeText: TextView
     private lateinit var syncFrequencyText: TextView
+    private lateinit var syncOfflineQueueText: TextView
     private lateinit var syncDetailsText: TextView
     private lateinit var btnManualSync: MaterialButton
 
@@ -67,6 +69,7 @@ class DashboardFragment : Fragment() {
         syncAccountText = view.findViewById(R.id.syncAccountText)
         syncLastTimeText = view.findViewById(R.id.syncLastTimeText)
         syncFrequencyText = view.findViewById(R.id.syncFrequencyText)
+        syncOfflineQueueText = view.findViewById(R.id.syncOfflineQueueText)
         syncDetailsText = view.findViewById(R.id.syncDetailsText)
         btnManualSync = view.findViewById(R.id.btnManualSync)
 
@@ -166,6 +169,7 @@ class DashboardFragment : Fragment() {
             syncAccountText.text = "Linked: Not connected to dashboard"
             syncLastTimeText.text = "Last Synced: Never"
             syncFrequencyText.text = "Status: Open Setup Wizard to pair with parent account"
+            syncOfflineQueueText.text = "Offline Buffer: ${OfflineQueueManager.getQueueSummary(requireContext())}"
             syncDetailsText.text = "Tap button below to start pairing wizard."
             btnManualSync.isEnabled = true
             btnManualSync.text = "RUN SETUP WIZARD TO PAIR"
@@ -186,6 +190,7 @@ class DashboardFragment : Fragment() {
         val syncSec = DevicePreferences.getSyncIntervalSeconds(requireContext())
         val freqDisplay = if (syncSec < 60) "${syncSec}s (Real-time)" else "${syncSec / 60} min"
         syncFrequencyText.text = "Heartbeat: Every $freqDisplay"
+        syncOfflineQueueText.text = "Offline Buffer: ${OfflineQueueManager.getQueueSummary(requireContext())}"
 
         val lastSync = DevicePreferences.getLastSyncTime(requireContext())
         val status = DevicePreferences.getLastSyncStatus(requireContext())

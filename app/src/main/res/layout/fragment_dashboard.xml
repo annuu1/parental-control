@@ -137,6 +137,15 @@
                     android:text="Heartbeat: Every 5s (Real-time)"
                     android:textColor="#666666"
                     android:textSize="13sp"
+                    android:layout_marginBottom="4dp"/>
+
+                <TextView
+                    android:id="@+id/syncOfflineQueueText"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Offline Buffer: Empty (0 MB / 20 MB max)"
+                    android:textColor="#555555"
+                    android:textSize="13sp"
                     android:layout_marginBottom="6dp"/>
 
                 <TextView

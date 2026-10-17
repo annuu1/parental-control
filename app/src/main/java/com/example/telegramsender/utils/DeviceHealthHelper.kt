@@ -20,7 +20,10 @@ object DeviceHealthHelper {
         val accessibilityEnabled: Boolean,
         val cameraPermission: Boolean,
         val audioPermission: Boolean,
-        val notificationPermission: Boolean
+        val notificationPermission: Boolean,
+        val offlineQueueSummary: String = "Empty (0 MB / 20 MB max)",
+        val offlineQueueBytes: Long = 0L,
+        val offlineQueueCount: Int = 0
     ) {
         fun toJsonObject(): JSONObject {
             return JSONObject().apply {
@@ -32,6 +35,9 @@ object DeviceHealthHelper {
                 put("cameraPermission", cameraPermission)
                 put("audioPermission", audioPermission)
                 put("notificationPermission", notificationPermission)
+                put("offlineQueueSummary", offlineQueueSummary)
+                put("offlineQueueBytes", offlineQueueBytes)
+                put("offlineQueueCount", offlineQueueCount)
             }
         }
     }
@@ -75,7 +81,10 @@ object DeviceHealthHelper {
             accessibilityEnabled = accessibilityActive,
             cameraPermission = cameraPerm,
             audioPermission = audioPerm,
-            notificationPermission = notificationPerm
+            notificationPermission = notificationPerm,
+            offlineQueueSummary = OfflineQueueManager.getQueueSummary(context),
+            offlineQueueBytes = OfflineQueueManager.getQueueSizeBytes(context),
+            offlineQueueCount = OfflineQueueManager.getQueueItemCount(context)
         )
     }
 

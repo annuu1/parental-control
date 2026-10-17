@@ -83,6 +83,15 @@ object SyncHelper {
             DevicePreferences.setLastSyncStatus(context, "SUCCESS")
             DevicePreferences.setLastSyncError(context, null)
 
+            // Flush offline 20MB queue if items were buffered
+            if (OfflineQueueManager.isNetworkAvailable(context) && OfflineQueueManager.getQueueItemCount(context) > 0) {
+                try {
+                    OfflineQueueManager.flushQueue(context)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Offline queue flush error during sync", e)
+                }
+            }
+
             // 7. Apply Remote Configuration to App Preferences (tg_pref)
             val cfg = result.config
             val tgPref = context.getSharedPreferences("tg_pref", Context.MODE_PRIVATE)

