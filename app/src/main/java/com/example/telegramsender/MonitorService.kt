@@ -321,31 +321,17 @@ class MonitorService : Service(), LifecycleOwner {
                     if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendLocation) {
                         fetchAndSendLocation()
                     }
-                    delay(locationInterval)
+                    val schedInterval = com.example.telegramsender.utils.LocationScheduleHelper.getActiveIntervalMillis(this@MonitorService)
+                    delay(schedInterval)
                 }
             }
         }
     }
 
     private fun fetchAndSendLocation() {
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            return
-        }
-        val lm = getSystemService(Context.LOCATION_SERVICE) as android.location.LocationManager
-        try {
-            val providers = lm.getProviders(true)
-            var bestLoc: android.location.Location? = null
-            for (p in providers) {
-                val l = lm.getLastKnownLocation(p) ?: continue
-                if (bestLoc == null || l.accuracy < bestLoc.accuracy) {
-                    bestLoc = l
-                }
-            }
-            if (bestLoc != null) {
-                sendTelegramLocation(botToken, targetChatId, bestLoc.latitude, bestLoc.longitude)
-            }
-        } catch (e: Exception) {
-            Log.e("MonitorService", "Location error", e)
+        val bestLoc = com.example.telegramsender.utils.LocationHelper.getBestLocation(this)
+        if (bestLoc != null) {
+            sendTelegramLocation(botToken, targetChatId, bestLoc.latitude, bestLoc.longitude)
         }
     }
 

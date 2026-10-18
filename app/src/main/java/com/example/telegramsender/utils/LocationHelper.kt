@@ -6,11 +6,12 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 object LocationHelper {
     private const val TAG = "LocationHelper"
@@ -52,57 +53,84 @@ object LocationHelper {
         return lm.isProviderEnabled(LocationManager.GPS_PROVIDER) || lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
     }
 
-    @SuppressLint("MissingPermission")
     fun startListening(context: Context) {
-        if (!hasLocationPermission(context)) {
-            Log.w(TAG, "Cannot start location listener: permission missing")
-            return
+        // Location is acquired on-demand in getBestLocation() to conserve battery
+    }
+
+    /**
+     * Power-efficient location acquisition:
+     * 1. Check recent cached fix (< 60s)
+     * 2. Check lastKnownLocation across GPS & Network
+     * 3. If stale, request fresh on-demand fix with timeout and release listeners immediately
+     */
+    @SuppressLint("MissingPermission")
+    fun getBestLocation(context: Context): Location? {
+        if (!hasLocationPermission(context)) return null
+
+        val now = System.currentTimeMillis()
+
+        // 1. Check in-memory cached location
+        val cached = lastLocation
+        if (cached != null && (now - cached.time) < 60000) {
+            return cached
         }
 
-        if (isListening) return
+        val lm = context.applicationContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return cached
 
+        // 2. Check lastKnownLocation from system providers
         try {
-            locationManager = context.applicationContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-            val lm = locationManager ?: return
-
-            // Register on GPS Provider
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER,
-                    5000L, // 5 seconds
-                    0f,
-                    locationListener,
-                    Looper.getMainLooper()
-                )
+            var best: Location? = cached
+            for (p in lm.getProviders(true)) {
+                val l = lm.getLastKnownLocation(p) ?: continue
+                if (best == null || (now - l.time) < 60000 || (l.accuracy < best.accuracy && (now - l.time) < 180000)) {
+                    best = l
+                }
             }
-
-            // Register on Network Provider (fast, works indoors)
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER,
-                    5000L,
-                    0f,
-                    locationListener,
-                    Looper.getMainLooper()
-                )
+            if (best != null && (now - best.time) < 60000) {
+                lastLocation = best
+                return best
             }
-
-            // Also check PASSIVE provider
-            if (lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.PASSIVE_PROVIDER,
-                    5000L,
-                    0f,
-                    locationListener,
-                    Looper.getMainLooper()
-                )
-            }
-
-            isListening = true
-            Log.d(TAG, "Location listeners registered on available providers")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to register location listener", e)
+            Log.w(TAG, "Error checking last known location", e)
         }
+
+        // 3. Request fresh on-demand fix with short timeout
+        try {
+            val latch = CountDownLatch(1)
+            var freshLoc: Location? = null
+
+            val singleListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    freshLoc = location
+                    lastLocation = location
+                    latch.countDown()
+                }
+                @Deprecated("Deprecated in Java")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+                override fun onProviderEnabled(provider: String) {}
+                override fun onProviderDisabled(provider: String) {}
+            }
+
+            val provider = when {
+                lm.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+                lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                else -> LocationManager.PASSIVE_PROVIDER
+            }
+
+            lm.requestLocationUpdates(provider, 1000L, 0f, singleListener, Looper.getMainLooper())
+
+            // Wait up to 5 seconds for a fresh fix, then stop listener so GPS hardware sleeps
+            latch.await(5, TimeUnit.SECONDS)
+            lm.removeUpdates(singleListener)
+
+            if (freshLoc != null) {
+                return freshLoc
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error obtaining on-demand location fix", e)
+        }
+
+        return lastLocation
     }
 
     fun stopListening() {
@@ -113,39 +141,6 @@ object LocationHelper {
             Log.d(TAG, "Location listener stopped")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to stop location listener", e)
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    fun getBestLocation(context: Context): Location? {
-        if (!hasLocationPermission(context)) return null
-
-        // Make sure listeners are active
-        startListening(context)
-
-        // Return current active listener location if fresh
-        val cached = lastLocation
-        if (cached != null && (System.currentTimeMillis() - cached.time) < 120000) {
-            return cached
-        }
-
-        // Fallback: Check lastKnownLocation from all providers
-        val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return cached
-        try {
-            var best: Location? = cached
-            for (p in lm.getProviders(true)) {
-                val l = lm.getLastKnownLocation(p) ?: continue
-                if (best == null || l.time > best.time || (l.accuracy < best.accuracy && (System.currentTimeMillis() - l.time) < 300000)) {
-                    best = l
-                }
-            }
-            if (best != null) {
-                lastLocation = best
-            }
-            return best
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting best location", e)
-            return cached
         }
     }
 }
