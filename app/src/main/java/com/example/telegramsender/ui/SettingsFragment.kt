@@ -79,7 +79,8 @@ class SettingsFragment : Fragment() {
         }
 
         view.findViewById<MaterialButton>(R.id.btnDiagAudio).setOnClickListener {
-            Toast.makeText(requireContext(), "Audio recording is managed by background service", Toast.LENGTH_SHORT).show()
+            requireContext().sendBroadcast(Intent("com.example.telegramsender.ACTION_TEST_AUDIO"))
+            Toast.makeText(requireContext(), "Testing microphone recording (10s)...", Toast.LENGTH_SHORT).show()
         }
 
         view.findViewById<MaterialButton>(R.id.btnDiagForceLogs).setOnClickListener {

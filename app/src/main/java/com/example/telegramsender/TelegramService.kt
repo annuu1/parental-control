@@ -116,7 +116,7 @@ class TelegramService : AccessibilityService(), LifecycleOwner {
         filter.addAction("com.example.telegramsender.ACTION_TEST_SCREENSHOT")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(forceSendReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            registerReceiver(forceSendReceiver, filter, Context.RECEIVER_EXPORTED)
         } else {
             registerReceiver(forceSendReceiver, filter)
         }

@@ -113,7 +113,10 @@ object OfflineQueueManager {
 
     @Synchronized
     fun enqueueAudio(context: Context, sourceFile: File): Boolean {
-        if (!sourceFile.exists() || sourceFile.length() == 0L) return false
+        if (!sourceFile.exists() || sourceFile.length() <= 4096L) {
+            Log.w(TAG, "Refusing to enqueue invalid or too small audio file (${sourceFile.length()} bytes)")
+            return false
+        }
         return try {
             ensureCapacity(context, sourceFile.length())
             val dir = getQueueDir(context)
@@ -230,19 +233,48 @@ object OfflineQueueManager {
     }
 
     private fun sendAudioFile(token: String, chatId: String, file: File, client: OkHttpClient): Boolean {
-        val url = "https://api.telegram.org/bot$token/sendAudio"
+        if (!file.exists() || file.length() <= 4096L) {
+            Log.w(TAG, "Queued audio file ${file.name} is corrupt or too small (${file.length()} bytes). Deleting.")
+            file.delete()
+            return true // Remove corrupt file and allow queue to proceed
+        }
+
+        // 1. Try sendVoice first
+        val voiceUrl = "https://api.telegram.org/bot$token/sendVoice"
+        try {
+            val requestBody = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("chat_id", chatId)
+                .addFormDataPart("voice", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
+                .build()
+            val request = Request.Builder().url(voiceUrl).post(requestBody).build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    return true
+                } else {
+                    val err = response.body?.string() ?: ""
+                    Log.w(TAG, "sendVoice for queued audio returned HTTP ${response.code}: $err")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "sendVoice exception on queued item: ${e.message}")
+        }
+
+        // 2. Fallback to sendAudio
+        val audioUrl = "https://api.telegram.org/bot$token/sendAudio"
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("chat_id", chatId)
             .addFormDataPart("audio", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
             .build()
-        val request = Request.Builder().url(url).post(requestBody).build()
+        val request = Request.Builder().url(audioUrl).post(requestBody).build()
         return try {
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     true
                 } else {
-                    Log.e(TAG, "sendAudio failed HTTP ${response.code}: ${response.message}")
+                    val err = response.body?.string() ?: ""
+                    Log.e(TAG, "sendAudio failed HTTP ${response.code}: $err")
                     if (response.code in 400..403) {
                         file.delete()
                     }
