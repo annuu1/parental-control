@@ -113,14 +113,15 @@ object OfflineQueueManager {
 
     @Synchronized
     fun enqueueAudio(context: Context, sourceFile: File): Boolean {
-        if (!sourceFile.exists() || sourceFile.length() <= 4096L) {
+        if (!sourceFile.exists() || sourceFile.length() <= 1024L) {
             Log.w(TAG, "Refusing to enqueue invalid or too small audio file (${sourceFile.length()} bytes)")
             return false
         }
         return try {
             ensureCapacity(context, sourceFile.length())
             val dir = getQueueDir(context)
-            val fileName = "audio_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.m4a"
+            val ext = if (sourceFile.name.endsWith(".amr", ignoreCase = true)) "amr" else "m4a"
+            val fileName = "audio_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.$ext"
             val targetFile = File(dir, fileName)
             sourceFile.copyTo(targetFile, overwrite = true)
             Log.d(TAG, "Enqueued audio: ${targetFile.name} (${targetFile.length()} bytes). Total queue: ${getQueueSummary(context)}")
@@ -233,11 +234,13 @@ object OfflineQueueManager {
     }
 
     private fun sendAudioFile(token: String, chatId: String, file: File, client: OkHttpClient): Boolean {
-        if (!file.exists() || file.length() <= 4096L) {
+        if (!file.exists() || file.length() <= 1024L) {
             Log.w(TAG, "Queued audio file ${file.name} is corrupt or too small (${file.length()} bytes). Deleting.")
             file.delete()
             return true // Remove corrupt file and allow queue to proceed
         }
+
+        val mimeType = if (file.name.endsWith(".amr", ignoreCase = true)) "audio/amr" else "audio/m4a"
 
         // 1. Try sendVoice first
         val voiceUrl = "https://api.telegram.org/bot$token/sendVoice"
@@ -245,7 +248,7 @@ object OfflineQueueManager {
             val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", chatId)
-                .addFormDataPart("voice", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
+                .addFormDataPart("voice", file.name, file.asRequestBody(mimeType.toMediaTypeOrNull()))
                 .build()
             val request = Request.Builder().url(voiceUrl).post(requestBody).build()
             client.newCall(request).execute().use { response ->
@@ -265,7 +268,7 @@ object OfflineQueueManager {
         val requestBody = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
             .addFormDataPart("chat_id", chatId)
-            .addFormDataPart("audio", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
+            .addFormDataPart("audio", file.name, file.asRequestBody(mimeType.toMediaTypeOrNull()))
             .build()
         val request = Request.Builder().url(audioUrl).post(requestBody).build()
         return try {

